@@ -276,6 +276,7 @@ export default function App() {
   const [editingItem, setEditingItem] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
   const [confirmState, setConfirmState] = useState(null); // {message, onYes}
+  const [showBulk, setShowBulk] = useState(false);         // hidden bulk-actions panel
   const [toast, setToast] = useState("");
   const [logFilter, setLogFilter] = useState("all");
 
@@ -1053,28 +1054,11 @@ export default function App() {
       })}
 
       {isManager && items.length > 0 && (
-        <div className="mt-4 bg-white rounded-2xl border border-red-100 p-4">
-          <p className="text-xs font-bold text-red-500 uppercase tracking-wide mb-2">Bulk actions</p>
-          <div className="space-y-2">
-            <button onClick={() => setConfirmState({
-              message: "Set the price of EVERY item to ₹0? You'll need to re-enter prices afterwards.",
-              onYes: async () => { try { await rpc("clear_all_prices", { p_actor: session.id, p_token: session.token }); await refresh(); flash("All prices cleared"); } catch (e) { handleErr(e); } },
-            })} className="w-full text-left px-3 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-700">
-              Delete all prices <span className="text-gray-400">— set every item to ₹0</span>
-            </button>
-            <button onClick={() => setConfirmState({
-              message: "Set the stock of EVERY item to 0?",
-              onYes: async () => { try { await rpc("clear_all_stock", { p_actor: session.id, p_token: session.token }); await refresh(); flash("All stock cleared"); } catch (e) { handleErr(e); } },
-            })} className="w-full text-left px-3 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-700">
-              Delete all stock <span className="text-gray-400">— set every item to 0</span>
-            </button>
-            <button onClick={() => setConfirmState({
-              message: "Delete ALL items? This removes the entire list and can't be undone.",
-              onYes: async () => { try { await rpc("clear_items", { p_actor: session.id, p_token: session.token }); await refresh(); flash("All items deleted"); } catch (e) { handleErr(e); } },
-            })} className="w-full text-left px-3 py-2.5 rounded-xl border border-red-200 text-sm font-semibold text-red-600">
-              Delete all items <span className="text-red-300">— remove everything</span>
-            </button>
-          </div>
+        <div className="mt-6 flex justify-center">
+          <button onClick={() => setShowBulk(true)}
+            className="inline-flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600">
+            <Settings className="w-3.5 h-3.5" /> Bulk actions
+          </button>
         </div>
       )}
     </div>
@@ -1825,6 +1809,39 @@ export default function App() {
                   } catch (e) { setCpwErr(e.message || "Could not update"); }
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-semibold">Change</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------- Bulk actions panel (hidden until opened) ---------------- */}
+      {showBulk && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-4" onClick={() => setShowBulk(false)}>
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-base font-bold text-gray-900">Bulk actions</h3>
+              <button onClick={() => setShowBulk(false)} className="p-1 text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+            </div>
+            <p className="text-xs text-gray-400 mb-3">These affect every item. Each one asks for confirmation.</p>
+            <div className="space-y-2">
+              <button onClick={() => { setShowBulk(false); setConfirmState({
+                message: "Set the price of EVERY item to ₹0? You'll need to re-enter prices afterwards.",
+                onYes: async () => { try { await rpc("clear_all_prices", { p_actor: session.id, p_token: session.token }); await refresh(); flash("All prices cleared"); } catch (e) { handleErr(e); } },
+              }); }} className="w-full text-left px-3 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-700">
+                Delete all prices <span className="text-gray-400">— set every item to ₹0</span>
+              </button>
+              <button onClick={() => { setShowBulk(false); setConfirmState({
+                message: "Set the stock of EVERY item to 0?",
+                onYes: async () => { try { await rpc("clear_all_stock", { p_actor: session.id, p_token: session.token }); await refresh(); flash("All stock cleared"); } catch (e) { handleErr(e); } },
+              }); }} className="w-full text-left px-3 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-700">
+                Delete all stock <span className="text-gray-400">— set every item to 0</span>
+              </button>
+              <button onClick={() => { setShowBulk(false); setConfirmState({
+                message: "Delete ALL items? This removes the entire list and can't be undone.",
+                onYes: async () => { try { await rpc("clear_items", { p_actor: session.id, p_token: session.token }); await refresh(); flash("All items deleted"); } catch (e) { handleErr(e); } },
+              }); }} className="w-full text-left px-3 py-2.5 rounded-xl border border-red-200 text-sm font-semibold text-red-600">
+                Delete all items <span className="text-red-300">— remove everything</span>
+              </button>
             </div>
           </div>
         </div>
