@@ -171,6 +171,8 @@ export default function App() {
 
   // modals
   const [receiptBill, setReceiptBill] = useState(null);
+  const [committing, setCommitting] = useState(false);
+  const [pendingPrint, setPendingPrint] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
   const [confirmState, setConfirmState] = useState(null); // {message, onYes}
@@ -339,6 +341,15 @@ export default function App() {
     return () => { clearTimeout(timer); evs.forEach((e) => window.removeEventListener(e, reset)); };
   }, [session]);
 
+  // Print only after the bill has been recorded (so the printed copy shows the real bill number).
+  useEffect(() => {
+    if (pendingPrint && receiptBill && !receiptBill.draft) {
+      setPendingPrint(false);
+      const t = setTimeout(() => window.print(), 80);
+      return () => clearTimeout(t);
+    }
+  }, [pendingPrint, receiptBill]);
+
   /* ---- derived ---- */
   const categories = useMemo(() => {
     const s = new Set(items.map((i) => i.category).filter(Boolean));
@@ -397,24 +408,47 @@ export default function App() {
     setCart([]); setCustName(""); setCustMobile(""); setDiscVal("");
   };
 
-  const saveBill = async () => {
+  // Build the bill payload from the current cart (used for preview + saving).
+  const buildBillPayload = () => ({
+    lines: cart.map((l) => ({ id: l.id, name: l.name, price: l.price, qty: l.qty, amount: l.price * l.qty })),
+    subtotal,
+    discountType: discType,
+    discountValue: Number(discVal) || 0,
+    discountAmount,
+    total,
+    customerName: custName.trim(),
+    customerMobile: custMobile.trim(),
+  });
+
+  // Step 1: show the receipt as a PREVIEW. Nothing is recorded yet.
+  const previewBill = () => {
     if (cart.length === 0) { flash("Add at least one item"); return; }
-    const payload = {
-      lines: cart.map((l) => ({ id: l.id, name: l.name, price: l.price, qty: l.qty, amount: l.price * l.qty })),
-      subtotal,
-      discountType: discType,
-      discountValue: Number(discVal) || 0,
-      discountAmount,
-      total,
-      customerName: custName.trim(),
-      customerMobile: custMobile.trim(),
-    };
+    const p = buildBillPayload();
+    setReceiptBill({
+      draft: true,
+      billNo: null,
+      createdAt: new Date().toISOString(),
+      billedBy: session.name,
+      ...p,
+    });
+  };
+
+  // Step 2: actually record the bill (called only when an action button is pressed).
+  // Saves once; if already saved, returns the saved bill without duplicating it.
+  const commitBill = async () => {
+    if (!receiptBill) return null;
+    if (!receiptBill.draft) return receiptBill;     // already recorded
+    if (committing) return null;
+    setCommitting(true);
     try {
-      const bill = await rpc("save_bill", { p_actor: session.id, p_token: session.token, p_bill: payload });
-      setReceiptBill(bill);
+      const bill = await rpc("save_bill", { p_actor: session.id, p_token: session.token, p_bill: buildBillPayload() });
+      const saved = { ...bill, draft: false };
+      setReceiptBill(saved);
       clearBill();
       await refresh();
-    } catch (e) { handleErr(e); }
+      setCommitting(false);
+      return saved;
+    } catch (e) { handleErr(e); setCommitting(false); return null; }
   };
 
   /* ---- login / logout ---- */
@@ -445,6 +479,13 @@ export default function App() {
     } catch {
       flash("Couldn't copy — select & copy manually");
     }
+  };
+
+  // Open WhatsApp with the bill pre-filled, addressed to the customer.
+  const sendWhatsApp = (bill) => {
+    if (!bill || !bill.customerMobile) { flash("Add the customer's mobile number to send on WhatsApp"); return; }
+    const url = `https://wa.me/${sanitizePhone(bill.customerMobile)}?text=${encodeURIComponent(receiptText(bill, config))}`;
+    window.open(url, "_blank", "noopener");
   };
 
   /* ---- forgot-password (OTP) ---- */
@@ -822,11 +863,11 @@ export default function App() {
             </div>
 
             <button
-              onClick={saveBill}
+              onClick={previewBill}
               disabled={cart.length === 0}
               className="w-full py-3 rounded-xl bg-orange-500 hover:bg-orange-600 disabled:opacity-40 text-white font-semibold flex items-center justify-center gap-2 transition"
             >
-              <Receipt className="w-4 h-4" /> Save & make bill
+              <Receipt className="w-4 h-4" /> Review bill
             </button>
           </div>
         </div>
@@ -963,14 +1004,26 @@ export default function App() {
             <p className="text-sm text-gray-400 px-3 py-4">No bills made yet.</p>
           ) : (
             bills.slice(0, 30).map((b) => (
-              <button key={b.id} onClick={() => setReceiptBill(b)} className="w-full flex items-center px-3 py-2.5 text-left hover:bg-gray-50">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-gray-900">{b.billNo}</p>
-                  <p className="text-xs text-gray-500">{fmtDateTime(b.createdAt)} • {b.billedBy}</p>
-                </div>
-                <span className="ml-auto text-sm font-bold text-gray-900 mr-1">{inr(b.total)}</span>
-                <ChevronRight className="w-4 h-4 text-gray-300" />
-              </button>
+              <div key={b.id} className="flex items-center px-3 py-2.5 hover:bg-gray-50">
+                <button onClick={() => setReceiptBill(b)} className="flex items-center flex-1 min-w-0 text-left">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-900">{b.billNo}</p>
+                    <p className="text-xs text-gray-500">{fmtDateTime(b.createdAt)} • {b.billedBy}</p>
+                  </div>
+                  <span className="ml-auto text-sm font-bold text-gray-900 mr-1">{inr(b.total)}</span>
+                  <ChevronRight className="w-4 h-4 text-gray-300" />
+                </button>
+                {isOwner && (
+                  <button
+                    onClick={() => setConfirmState({
+                      message: `Delete bill ${b.billNo} (${inr(b.total)})? Its items go back into stock. This can't be undone.`,
+                      onYes: async () => { try { await rpc("delete_bill", { p_actor: session.id, p_token: session.token, p_id: b.id }); await refresh(); flash("Bill deleted"); } catch (e) { handleErr(e); } },
+                    })}
+                    className="ml-2 p-2 text-gray-300 hover:text-red-500" title="Delete bill">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             ))
           )}
         </div>
@@ -1268,9 +1321,15 @@ export default function App() {
         <div className="fixed inset-0 z-40 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white w-full sm:max-w-sm sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto">
             <div className="no-print flex items-center px-4 py-3 border-b border-gray-100 sticky top-0 bg-white">
-              <span className="font-semibold">Bill {receiptBill.billNo}</span>
+              <span className="font-semibold">{receiptBill.draft ? "New bill — preview" : `Bill ${receiptBill.billNo}`}</span>
               <button onClick={() => setReceiptBill(null)} className="ml-auto p-1 text-gray-400"><X className="w-5 h-5" /></button>
             </div>
+
+            {receiptBill.draft && (
+              <div className="no-print mx-4 mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                Not recorded yet. Tap <b>Print</b>, <b>WhatsApp</b>, or <b>Print + WhatsApp</b> below to save this bill. Closing with ✕ will discard it.
+              </div>
+            )}
 
             {/* printable receipt */}
             <div id="receipt-print" className="px-5 py-4 font-mono text-[13px] text-gray-900">
@@ -1281,7 +1340,7 @@ export default function App() {
               </div>
               <div className="border-t border-dashed border-gray-400 my-2" />
               <div className="flex justify-between text-xs">
-                <span>{receiptBill.billNo}</span>
+                <span>{receiptBill.billNo || "(new bill)"}</span>
                 <span>{fmtDateTime(receiptBill.createdAt)}</span>
               </div>
               {receiptBill.customerName && <p className="text-xs mt-0.5">Customer: {receiptBill.customerName}</p>}
@@ -1309,32 +1368,23 @@ export default function App() {
             </div>
 
             {/* actions */}
-            <div className="no-print p-4 border-t border-gray-100 grid grid-cols-2 gap-2 sticky bottom-0 bg-white">
-              <button onClick={() => window.print()}
-                className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-indigo-900 text-white text-sm font-semibold">
-                <Printer className="w-4 h-4" /> Print
-              </button>
-              {receiptBill.customerMobile ? (
-                <a
-                  href={`https://wa.me/${sanitizePhone(receiptBill.customerMobile)}?text=${encodeURIComponent(receiptText(receiptBill, config))}`}
-                  target="_blank" rel="noreferrer"
-                  className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold"
-                >
-                  <MessageCircle className="w-4 h-4" /> WhatsApp
-                </a>
-              ) : (
-                <button onClick={() => flash("Add customer mobile to send on WhatsApp")}
-                  className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gray-100 text-gray-400 text-sm font-semibold">
+            <div className="no-print p-4 border-t border-gray-100 space-y-2 sticky bottom-0 bg-white">
+              <div className="grid grid-cols-2 gap-2">
+                <button disabled={committing}
+                  onClick={async () => { const b = await commitBill(); if (b) setPendingPrint(true); }}
+                  className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-indigo-900 text-white text-sm font-semibold disabled:opacity-50">
+                  <Printer className="w-4 h-4" /> Print
+                </button>
+                <button disabled={committing}
+                  onClick={async () => { const b = await commitBill(); if (b) sendWhatsApp(b); }}
+                  className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50 ${receiptBill.customerMobile ? "bg-emerald-600 text-white" : "bg-gray-100 text-gray-400"}`}>
                   <MessageCircle className="w-4 h-4" /> WhatsApp
                 </button>
-              )}
-              <button onClick={() => copyText(receiptText(receiptBill, config))}
-                className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold">
-                <Copy className="w-4 h-4" /> Copy
-              </button>
-              <button onClick={() => setReceiptBill(null)}
-                className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold">
-                Done
+              </div>
+              <button disabled={committing}
+                onClick={async () => { const b = await commitBill(); if (b) { sendWhatsApp(b); setPendingPrint(true); } }}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-700 text-white text-sm font-semibold disabled:opacity-50">
+                <Printer className="w-4 h-4" /> <span>+</span> <MessageCircle className="w-4 h-4" /> Print + WhatsApp
               </button>
             </div>
           </div>
