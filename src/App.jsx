@@ -373,6 +373,7 @@ export default function App() {
   const [receiptBill, setReceiptBill] = useState(null);
   const [committing, setCommitting] = useState(false);
   const [payMode, setPayMode] = useState("");   // 'cash' | 'online' (required before recording)
+  const [pendingPrint, setPendingPrint] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
   const [confirmState, setConfirmState] = useState(null); // {message, onYes}
@@ -532,6 +533,19 @@ export default function App() {
     else root.classList.remove("hrc-dark");
     document.body.style.backgroundColor = theme === "dark" ? "#0f1117" : "";
   }, [theme]);
+
+  // Print the on-screen receipt once it shows the saved (non-draft) bill.
+  // We print the MAIN page (mobile browsers support this; printing a hidden
+  // iframe does not). The @media print CSS shows only #receipt-print.
+  useEffect(() => {
+    if (pendingPrint && receiptBill && !receiptBill.draft) {
+      const t = setTimeout(() => {
+        try { window.print(); } catch (e) {}
+        setPendingPrint(false);
+      }, 200);
+      return () => clearTimeout(t);
+    }
+  }, [pendingPrint, receiptBill]);
 
   // Auto sign-out after 15 minutes of inactivity.
   useEffect(() => {
@@ -1629,7 +1643,7 @@ export default function App() {
               )}
               <div className="grid grid-cols-2 gap-2">
                 <button disabled={committing || (receiptBill.draft && !payMode)}
-                  onClick={async () => { const b = await commitBill(); if (b) printBill(b, config); }}
+                  onClick={async () => { const b = await commitBill(); if (b) setPendingPrint(true); }}
                   className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-indigo-900 text-white text-sm font-semibold disabled:opacity-40">
                   <Printer className="w-4 h-4" /> Print
                 </button>
@@ -1640,7 +1654,7 @@ export default function App() {
                 </button>
               </div>
               <button disabled={committing || (receiptBill.draft && !payMode)}
-                onClick={async () => { const b = await commitBill(); if (b) { printBill(b, config); sendWhatsApp(b); } }}
+                onClick={async () => { const b = await commitBill(); if (b) { sendWhatsApp(b); setPendingPrint(true); } }}
                 className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-700 text-white text-sm font-semibold disabled:opacity-40">
                 <span className="flex items-center gap-1"><Printer className="w-4 h-4" /> Print</span>
                 <span>+</span>
