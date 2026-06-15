@@ -375,6 +375,7 @@ export default function App() {
   const [payMode, setPayMode] = useState("");   // 'cash' | 'online' (required before recording)
   const [pendingPrint, setPendingPrint] = useState(false);
   const sigRef = useRef(null);   // last seen change-signature for live updates
+  const [installEvt, setInstallEvt] = useState(null);  // Chrome's deferred install prompt
   const [editingItem, setEditingItem] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
   const [confirmState, setConfirmState] = useState(null); // {message, onYes}
@@ -583,6 +584,25 @@ export default function App() {
       window.removeEventListener("focus", check);
     };
   }, [session]);
+
+  // Capture Chrome's install prompt so we can show an in-app "Install" button.
+  useEffect(() => {
+    const onPrompt = (e) => { e.preventDefault(); setInstallEvt(e); };
+    const onInstalled = () => setInstallEvt(null);
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+
+  const doInstall = async () => {
+    if (!installEvt) return;
+    installEvt.prompt();
+    try { await installEvt.userChoice; } catch (e) {}
+    setInstallEvt(null);
+  };
 
   // Auto sign-out after 15 minutes of inactivity.
   useEffect(() => {
@@ -1571,6 +1591,21 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {/* Install-app banner (appears when the phone/browser is ready to install) */}
+      {installEvt && (
+        <div className="no-print bg-indigo-50 border-b border-indigo-100 px-4 py-2.5">
+          <div className="max-w-5xl mx-auto flex items-center gap-3">
+            <img src={LOGO_DATA_URI} alt="" className="w-8 h-8 rounded-lg object-cover" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-indigo-950 leading-tight">Install the Hyrocks app</p>
+              <p className="text-xs text-indigo-700 leading-tight">Add it to your home screen for quick, full-screen access.</p>
+            </div>
+            <button onClick={doInstall} className="px-3.5 py-2 rounded-lg bg-indigo-900 text-white text-sm font-semibold whitespace-nowrap">Install</button>
+            <button onClick={() => setInstallEvt(null)} className="p-1 text-indigo-400 hover:text-indigo-600" title="Not now"><X className="w-4 h-4" /></button>
+          </div>
+        </div>
+      )}
 
       {/* content */}
       {screen === "billing" && renderBilling()}
