@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Hyrocks Crackers — Billing</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      html, body, #root { height: 100%; }
+      body { margin: 0; -webkit-text-size-adjust: 100%; }
+      .hrc-glow { background: radial-gradient(circle at 50% 30%, rgba(255,90,31,.35), rgba(255,176,32,.12) 35%, transparent 65%); }
+
+      /* dark mode: overrides the utility classes the app uses */
+      .hrc-dark { color-scheme: dark; }
+      .hrc-dark .bg-slate-50 { background-color:#0f1117 !important; }
+      .hrc-dark .bg-white { background-color:#1a1d27 !important; }
+      .hrc-dark .bg-gray-50 { background-color:#222633 !important; }
+      .hrc-dark .bg-gray-100 { background-color:#2a2f3d !important; }
+      .hrc-dark .bg-indigo-100 { background-color:#312e63 !important; }
+      .hrc-dark .bg-emerald-50 { background-color:#0e2a22 !important; }
+      .hrc-dark .bg-red-100 { background-color:#3a1f24 !important; }
+      .hrc-dark .text-gray-900 { color:#f1f3f7 !important; }
+      .hrc-dark .text-gray-800 { color:#e6e9ef !important; }
+      .hrc-dark .text-gray-700 { color:#d6dae3 !important; }
+      .hrc-dark .text-gray-600 { color:#b8bdc9 !important; }
+      .hrc-dark .text-gray-500 { color:#9aa1b1 !important; }
+      .hrc-dark .text-gray-400 { color:#7e8596 !important; }
+      .hrc-dark .text-indigo-900 { color:#a9b1ff !important; }
+      .hrc-dark .border-gray-200 { border-color:#2e3342 !important; }
+      .hrc-dark .border-gray-100 { border-color:#272c39 !important; }
+      .hrc-dark .border-gray-50 { border-color:#222633 !important; }
+      .hrc-dark .divide-gray-50 > :not([hidden]) ~ :not([hidden]) { border-color:#222633 !important; }
+      .hrc-dark .hover\:bg-gray-50:hover { background-color:#222633 !important; }
+      .hrc-dark input::placeholder, .hrc-dark textarea::placeholder { color:#6b7280 !important; }
+
+      @media print {
+        body { background:#fff !important; }
+        body * { visibility:hidden !important; }
+        #receipt-print, #receipt-print * { visibility:visible !important; }
+        #receipt-print { position:absolute; left:0; top:0; width:80mm; padding:4mm; }
+        .no-print { display:none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
