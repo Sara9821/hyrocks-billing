@@ -374,6 +374,7 @@ export default function App() {
   const [committing, setCommitting] = useState(false);
   const [payMode, setPayMode] = useState("");   // 'cash' | 'online' (required before recording)
   const [pendingPrint, setPendingPrint] = useState(false);
+  const sigRef = useRef(null);   // last seen change-signature for live updates
   const [editingItem, setEditingItem] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
   const [confirmState, setConfirmState] = useState(null); // {message, onYes}
@@ -431,13 +432,15 @@ export default function App() {
 
   /* ---- data layer (Supabase) ---- */
   // Reload everything for the signed-in user from the database.
-  async function refresh(sess) {
+  async function refresh(sess, silent) {
     const s = sess || session;
     if (!s) return;
     const st = await rpc("get_state", { p_actor: s.id, p_token: s.token });
     if (st.config) {
       setConfigState(st.config);
-      setSettingsForm({ shopName: st.config.shopName || "", address: st.config.address || "", phone: st.config.phone || "" });
+      // Don't overwrite the shop-details form during a background refresh —
+      // the user may be editing it. Only sync it on explicit refreshes.
+      if (!silent) setSettingsForm({ shopName: st.config.shopName || "", address: st.config.address || "", phone: st.config.phone || "" });
     }
     setItemsState(st.items || []);
     setBillsState(st.bills || []);
@@ -546,6 +549,40 @@ export default function App() {
       return () => clearTimeout(t);
     }
   }, [pendingPrint, receiptBill]);
+
+  // Live updates without manual refresh: poll a tiny change-signature every few
+  // seconds (and on tab focus). When it changes — a new bill, new feedback, a
+  // stock/price edit, etc., by anyone — pull fresh data. The probe is tiny, so
+  // this stays light; full data is fetched only when something actually changed.
+  useEffect(() => {
+    if (!session) return;
+    sigRef.current = null;            // re-baseline for this session
+    let stopped = false;
+    const check = async () => {
+      if (document.hidden) return;
+      try {
+        const p = await rpc("get_pulse", { p_actor: session.id, p_token: session.token });
+        const sig = p && p.sig;
+        if (stopped || !sig) return;
+        if (sigRef.current === null) { sigRef.current = sig; return; }
+        if (sig !== sigRef.current) { sigRef.current = sig; await refresh(session, true); }
+      } catch (e) {
+        const m = String((e && e.message) || e);
+        if (/session|signed in|blocked/i.test(m)) handleErr(e);
+      }
+    };
+    const id = setInterval(check, 5000);
+    const onVisible = () => { if (!document.hidden) check(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", check);
+    check();
+    return () => {
+      stopped = true;
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", check);
+    };
+  }, [session]);
 
   // Auto sign-out after 15 minutes of inactivity.
   useEffect(() => {
