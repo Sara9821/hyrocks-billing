@@ -1,9 +1,10 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import App, { PublicFeedback } from "./App.jsx";
+import App, { PublicBill } from "./App.jsx";
 
-const isFeedback = new URLSearchParams(window.location.search).has("fb");
+// If the URL has ?bill=... show the public bill page (no login); otherwise the app.
+const isBill = new URLSearchParams(window.location.search).has("bill");
 
 createRoot(document.getElementById("root")).render(
-  isFeedback ? <PublicFeedback /> : <App />
+  isBill ? <PublicBill /> : <App />
 );
