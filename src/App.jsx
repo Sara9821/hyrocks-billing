@@ -3,7 +3,7 @@ import {
   ShoppingCart, Plus, Minus, Trash2, Printer, MessageCircle, Receipt,
   Package, BarChart3, Settings as SettingsIcon, LogOut, Search, X, Check,
   Pencil, Users, Sparkles, Tag, Phone, User, ChevronRight, Copy,
-  Sun, Moon, Eye, EyeOff, ScrollText, KeyRound
+  Sun, Moon, Eye, EyeOff, ScrollText, KeyRound, Star
 } from "lucide-react";
 import { rpc } from "./supabase.js";
 
@@ -18,6 +18,16 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */
 const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
+
+// Mirror of the database password rule, for instant feedback.
+function pwError(p) {
+  if (!p || p.length < 8) return "Use at least 8 characters";
+  if (!/[A-Z]/.test(p)) return "Add at least one CAPITAL letter (A-Z)";
+  if (!/[a-z]/.test(p)) return "Add at least one small letter (a-z)";
+  if (!/[0-9]/.test(p)) return "Add at least one number (0-9)";
+  if (!/[^A-Za-z0-9]/.test(p)) return "Add at least one symbol (e.g. ! @ # $)";
+  return "";
+}
 
 function fmtDateTime(iso) {
   const d = new Date(iso);
@@ -57,7 +67,82 @@ function receiptText(bill, config) {
   if (bill.discountAmount > 0) t += `Discount: -${inr(bill.discountAmount)}\n`;
   t += `*TOTAL: ${inr(bill.total)}*\n`;
   t += `------------------------------\nBilled by: ${bill.billedBy}\nThank you! Have a safe & happy celebration 🎆`;
+  const origin = (typeof window !== "undefined" && window.location && window.location.origin) ? window.location.origin : "";
+  if (origin) t += `\n\n⭐ Rate your experience:\n${origin}/?fb=1&bill=${encodeURIComponent(bill.billNo)}`;
   return t;
+}
+
+/* ================================================================== */
+/* Public customer feedback page (opened from the bill link, no login) */
+/* ================================================================== */
+export function PublicFeedback() {
+  const params = new URLSearchParams(window.location.search);
+  const billNo = params.get("bill") || "";
+  const [rating, setRating] = useState(0);
+  const [hover, setHover] = useState(0);
+  const [comment, setComment] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState("");
+
+  const submit = async () => {
+    if (rating < 1) { setErr("Please tap a star rating"); return; }
+    setBusy(true); setErr("");
+    try {
+      const r = await rpc("submit_feedback", {
+        p_bill_no: billNo, p_rating: rating, p_comment: comment.trim(), p_name: name.trim(),
+      });
+      if (!r || !r.ok) { setErr((r && r.error) || "Could not submit"); setBusy(false); return; }
+      setDone(true);
+    } catch (e) { setErr(e.message || "Could not submit. Please try again."); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-start justify-center p-4">
+      <div className="w-full max-w-md mt-8">
+        <div className="flex flex-col items-center mb-5">
+          <img src={LOGO_DATA_URI} alt="" className="w-16 h-16 rounded-2xl object-cover shadow mb-2" />
+          <h1 className="text-xl font-bold text-gray-900">Hyrocks Crackers</h1>
+        </div>
+        {done ? (
+          <div className="bg-white rounded-2xl border border-gray-200 p-6 text-center">
+            <div className="text-4xl mb-2">🎆</div>
+            <h2 className="text-lg font-bold text-gray-900 mb-1">Thank you!</h2>
+            <p className="text-sm text-gray-500">Your feedback helps us serve you better. Have a safe &amp; happy celebration!</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-2xl border border-gray-200 p-5">
+            <h2 className="text-base font-bold text-gray-900 mb-1">How was your experience?</h2>
+            {billNo && <p className="text-xs text-gray-400 mb-2">Bill {billNo}</p>}
+            <div className="flex justify-center gap-1.5 my-4">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button key={n} type="button"
+                  onClick={() => setRating(n)}
+                  onMouseEnter={() => setHover(n)} onMouseLeave={() => setHover(0)}
+                  className="p-1">
+                  <Star className={`w-9 h-9 ${(hover || rating) >= n ? "fill-amber-400 text-amber-400" : "text-gray-300"}`} />
+                </button>
+              ))}
+            </div>
+            <textarea value={comment} onChange={(e) => setComment(e.target.value)}
+              rows={4} placeholder="Tell us more (optional)"
+              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-900 focus:outline-none focus:border-orange-400" />
+            <input value={name} onChange={(e) => setName(e.target.value)}
+              placeholder="Your name (optional)"
+              className="w-full mt-2 px-3 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-900 focus:outline-none focus:border-orange-400" />
+            {err && <p className="text-red-600 text-sm mt-2">{err}</p>}
+            <button onClick={submit} disabled={busy}
+              className="w-full mt-4 py-3 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-semibold disabled:opacity-60">
+              {busy ? "Submitting…" : "Submit feedback"}
+            </button>
+          </div>
+        )}
+        <p className="text-center text-[11px] text-gray-400 mt-4">Hyrocks Crackers · F Squad Enterprises</p>
+      </div>
+    </div>
+  );
 }
 
 /* ================================================================== */
@@ -118,12 +203,16 @@ export default function App() {
   const [settingsForm, setSettingsForm] = useState({ shopName: "", address: "", phone: "" });
   const [savingSettings, setSavingSettings] = useState(false);
 
-  // change-own-password modal (for non-manager users)
+  // change-password modal (all roles)
   const [cpwOpen, setCpwOpen] = useState(false);
+  const [cpwOld, setCpwOld] = useState("");
   const [cpw1, setCpw1] = useState("");
   const [cpw2, setCpw2] = useState("");
   const [cpwErr, setCpwErr] = useState("");
   const [showCpw, setShowCpw] = useState(false);
+
+  // customer feedback
+  const [feedback, setFeedbackState] = useState([]);
 
   const flash = (msg) => { setToast(msg); setTimeout(() => setToast(""), 1800); };
 
@@ -141,6 +230,7 @@ export default function App() {
     setBillsState(st.bills || []);
     setUsersState(st.users || []);
     setLogsState(st.logs || []);
+    setFeedbackState(st.feedback || []);
   }
 
   // Centralised error handling: sign the user out if their session is no longer valid.
@@ -521,7 +611,8 @@ export default function App() {
   if (session.mustChange) {
     const submitForced = async () => {
       const p1 = forcePw1.trim();
-      if (p1.length < 6) { setForceErr("Use at least 6 characters"); return; }
+      const pe = pwError(p1);
+      if (pe) { setForceErr(pe); return; }
       if (p1 !== forcePw2.trim()) { setForceErr("Passwords don't match"); return; }
       try {
         await rpc("change_own_password", { p_actor: session.id, p_token: session.token, p_new: p1 });
@@ -538,7 +629,7 @@ export default function App() {
         <div className="w-full max-w-sm bg-white rounded-2xl p-6 shadow-2xl">
           <h1 className="text-xl font-bold text-gray-900">Set a new password</h1>
           <p className="text-sm text-gray-500 mt-1 mb-4">
-            Welcome, {session.name}. For your security, please choose your own password before continuing.
+            Welcome, {session.name}. For your security, please choose your own password before continuing. It must include a capital letter, a small letter, a number and a symbol (min 8 characters).
           </p>
           <label className="block text-xs font-semibold text-gray-500 mb-1.5">NEW PASSWORD</label>
           <div className="relative mb-3">
@@ -920,8 +1011,89 @@ export default function App() {
     );
   };
 
+  const markFeedbackRead = async (f) => {
+    if (f.read) return;
+    setFeedbackState((prev) => prev.map((x) => (x.id === f.id ? { ...x, read: true } : x)));
+    try { await rpc("mark_feedback_read", { p_actor: session.id, p_token: session.token, p_id: f.id }); }
+    catch (e) { handleErr(e); }
+  };
+  const markAllFeedbackRead = async () => {
+    setFeedbackState((prev) => prev.map((x) => ({ ...x, read: true })));
+    try { await rpc("mark_all_feedback_read", { p_actor: session.id, p_token: session.token }); }
+    catch (e) { handleErr(e); }
+  };
+
+  const renderFeedback = () => {
+    const unread = feedback.filter((f) => !f.read).length;
+    const avg = feedback.length ? feedback.reduce((s, f) => s + f.rating, 0) / feedback.length : 0;
+    return (
+      <div className="max-w-2xl mx-auto px-3 pb-32 pt-4 space-y-4">
+        <div className="flex items-center">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">Customer feedback</h2>
+            <p className="text-xs text-gray-500">
+              {feedback.length} review{feedback.length === 1 ? "" : "s"}
+              {feedback.length > 0 ? ` · avg ${avg.toFixed(1)}★` : ""}
+              {unread > 0 ? <> · <span className="text-orange-500 font-semibold">{unread} unread</span></> : ""}
+            </p>
+          </div>
+          {unread > 0 && (
+            <button onClick={markAllFeedbackRead}
+              className="ml-auto px-3 py-2 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold">
+              Mark all read
+            </button>
+          )}
+        </div>
+
+        {feedback.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center text-gray-400 text-sm">
+            No feedback yet. It shows up here when customers rate you using the link on their WhatsApp bill.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {feedback.map((f) => (
+              <button key={f.id} onClick={() => markFeedbackRead(f)}
+                className={`w-full text-left rounded-2xl border p-3 transition ${f.read ? "bg-white border-gray-200" : "bg-amber-50 border-amber-200"}`}>
+                <div className="flex items-center gap-2">
+                  <div className="flex">
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <Star key={n} className={`w-4 h-4 ${f.rating >= n ? "fill-amber-400 text-amber-400" : "text-gray-300"}`} />
+                    ))}
+                  </div>
+                  {!f.read && <span className="w-2 h-2 rounded-full bg-orange-500" title="Unread" />}
+                  <span className="ml-auto text-[11px] text-gray-400">{fmtDateTime(f.createdAt)}</span>
+                </div>
+                {f.comment && <p className="text-sm text-gray-800 mt-1.5 whitespace-pre-wrap">{f.comment}</p>}
+                <p className="text-xs text-gray-500 mt-1">
+                  {f.customerName ? f.customerName : "Anonymous"}{f.billNo ? ` · ${f.billNo}` : ""}
+                </p>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderSettings = () => (
     <div className="max-w-2xl mx-auto px-3 pb-32 pt-4 space-y-6">
+      <div>
+        <h2 className="text-lg font-bold text-gray-900 mb-3">Your account</h2>
+        <div className="bg-white rounded-2xl border border-gray-200 p-4 flex items-center">
+          <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center mr-3">
+            <User className="w-4 h-4 text-indigo-900" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-900 truncate">{session.name}</p>
+            <p className="text-xs text-gray-500 capitalize">{session.role}</p>
+          </div>
+          <button onClick={() => { setCpwOld(""); setCpw1(""); setCpw2(""); setCpwErr(""); setShowCpw(false); setCpwOpen(true); }}
+            className="ml-auto px-3 py-2 rounded-xl bg-orange-500 text-white text-sm font-semibold whitespace-nowrap">
+            Change password
+          </button>
+        </div>
+      </div>
+
       {isManager && (
         <div>
           <h2 className="text-lg font-bold text-gray-900 mb-3">Shop details</h2>
@@ -965,7 +1137,7 @@ export default function App() {
         </div>
       )}
 
-      {isManager ? (
+      {isManager && (
         <div>
           <div className="flex items-center mb-3">
             <h2 className="text-lg font-bold text-gray-900">Users</h2>
@@ -996,23 +1168,6 @@ export default function App() {
             {isOwner ? "Tap a user to reset password, set their role, block, or remove them." : "Tap a user to reset password, block, or remove them. Only the owner can assign roles."}
           </p>
         </div>
-      ) : (
-        <div>
-          <h2 className="text-lg font-bold text-gray-900 mb-3">Your account</h2>
-          <div className="bg-white rounded-2xl border border-gray-200 p-4 flex items-center">
-            <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center mr-3">
-              <User className="w-4 h-4 text-indigo-900" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-900 truncate">{session.name}</p>
-              <p className="text-xs text-gray-500 capitalize">{session.role}</p>
-            </div>
-            <button onClick={() => { setCpw1(""); setCpw2(""); setCpwErr(""); setShowCpw(false); setCpwOpen(true); }}
-              className="ml-auto px-3 py-2 rounded-xl bg-orange-500 text-white text-sm font-semibold whitespace-nowrap">
-              Change password
-            </button>
-          </div>
-        </div>
       )}
 
       {isManager && (
@@ -1039,9 +1194,11 @@ export default function App() {
     { id: "billing", label: "Bill", icon: ShoppingCart },
     { id: "items", label: "Items", icon: Package },
     { id: "reports", label: "Reports", icon: BarChart3 },
+    { id: "feedback", label: "Feedback", icon: Star },
     ...(isOwner ? [{ id: "logs", label: "Logs", icon: ScrollText }] : []),
     { id: "settings", label: "Settings", icon: SettingsIcon },
   ];
+  const feedbackUnread = feedback.filter((f) => !f.read).length;
 
   return (
     <div className="min-h-screen bg-slate-50 text-gray-900">
@@ -1078,19 +1235,27 @@ export default function App() {
       {screen === "billing" && renderBilling()}
       {screen === "items" && renderItems()}
       {screen === "reports" && renderReports()}
+      {screen === "feedback" && renderFeedback()}
       {screen === "logs" && isOwner && renderLogs()}
       {screen === "settings" && renderSettings()}
 
       {/* bottom nav */}
       <nav className="fixed bottom-0 inset-x-0 z-20 bg-white border-t border-gray-200">
-        <div className={`max-w-5xl mx-auto grid ${tabs.length === 5 ? "grid-cols-5" : "grid-cols-4"}`}>
+        <div className="max-w-5xl mx-auto grid" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
           {tabs.map((t) => {
             const Icon = t.icon;
             const active = screen === t.id;
             return (
               <button key={t.id} onClick={() => setScreen(t.id)}
                 className={`flex flex-col items-center py-2.5 gap-0.5 ${active ? "text-orange-500" : "text-gray-400"}`}>
-                <Icon className="w-5 h-5" />
+                <span className="relative">
+                  <Icon className="w-5 h-5" />
+                  {t.id === "feedback" && feedbackUnread > 0 && (
+                    <span className="absolute -top-1.5 -right-2 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
+                      {feedbackUnread > 99 ? "99+" : feedbackUnread}
+                    </span>
+                  )}
+                </span>
                 <span className="text-[11px] font-medium">{t.label}</span>
               </button>
             );
@@ -1293,15 +1458,17 @@ export default function App() {
                   inputMode="tel" placeholder="10-digit mobile number"
                   className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
               </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-500">{editingUser.id === session.id ? "New password" : (editingUser.id ? "Reset password" : "Password")}</label>
-                <input type="password" value={editingUser.password || ""} onChange={(e) => setEditingUser({ ...editingUser, password: e.target.value })}
-                  placeholder={editingUser.id && editingUser.id !== session.id ? "Leave blank to keep current" : "Enter password"}
-                  className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
-                {editingUser.id && editingUser.id !== session.id && (
-                  <p className="text-xs text-gray-400 mt-1">If you set a new password, they'll be asked to change it at next login.</p>
-                )}
-              </div>
+              {editingUser.id !== session.id && (
+                <div>
+                  <label className="text-xs font-semibold text-gray-500">{editingUser.id ? "Reset password" : "Password"}</label>
+                  <input type="password" value={editingUser.password || ""} onChange={(e) => setEditingUser({ ...editingUser, password: e.target.value })}
+                    placeholder={editingUser.id ? "Leave blank to keep current" : "Enter password"}
+                    className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
+                  {editingUser.id && (
+                    <p className="text-xs text-gray-400 mt-1">If you set a new password, they'll be asked to change it at next login.</p>
+                  )}
+                </div>
+              )}
               {isOwner && editingUser.id !== session.id && (
                 <div>
                   <label className="text-xs font-semibold text-gray-500">Role</label>
@@ -1372,12 +1539,15 @@ export default function App() {
         </div>
       )}
 
-      {/* ---------------- Change password (self) ---------------- */}
+      {/* ---------------- Change password (all roles) ---------------- */}
       {cpwOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-xs w-full p-5">
             <h3 className="text-base font-bold text-gray-900 mb-1">Change password</h3>
-            <p className="text-xs text-gray-500 mb-3">Choose a new password for your account.</p>
+            <p className="text-xs text-gray-500 mb-3">After changing, you'll be signed out and need to log in with the new password.</p>
+            <input type={showCpw ? "text" : "password"} value={cpwOld} onChange={(e) => setCpwOld(e.target.value)}
+              placeholder="Current password"
+              className="w-full mb-2 px-3 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:outline-none focus:border-orange-400" />
             <div className="relative mb-2">
               <input type={showCpw ? "text" : "password"} value={cpw1} onChange={(e) => setCpw1(e.target.value)}
                 placeholder="New password"
@@ -1390,21 +1560,26 @@ export default function App() {
             <input type={showCpw ? "text" : "password"} value={cpw2} onChange={(e) => setCpw2(e.target.value)}
               placeholder="Re-enter new password"
               className="w-full mb-2 px-3 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-900 focus:outline-none focus:border-orange-400" />
+            <p className="text-[11px] text-gray-400 mb-2 leading-snug">Must include a capital letter, a small letter, a number and a symbol (min 8 characters).</p>
             {cpwErr && <p className="text-red-600 text-sm mb-2">{cpwErr}</p>}
             <div className="flex gap-2 mt-1">
               <button onClick={() => setCpwOpen(false)}
                 className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold">Cancel</button>
               <button
                 onClick={async () => {
-                  if (cpw1.length < 4) { setCpwErr("Use at least 4 characters"); return; }
-                  if (cpw1 !== cpw2) { setCpwErr("Passwords don't match"); return; }
+                  if (!cpwOld) { setCpwErr("Enter your current password"); return; }
+                  const pe = pwError(cpw1);
+                  if (pe) { setCpwErr(pe); return; }
+                  if (cpw1 !== cpw2) { setCpwErr("New passwords don't match"); return; }
                   try {
-                    await rpc("change_own_password", { p_actor: session.id, p_token: session.token, p_new: cpw1 });
-                    setCpwOpen(false); setCpw1(""); setCpw2(""); setCpwErr("");
-                    flash("Password updated");
+                    const r = await rpc("change_my_password", { p_actor: session.id, p_token: session.token, p_old: cpwOld, p_new: cpw1 });
+                    if (!r || !r.ok) { setCpwErr((r && r.error) || "Could not update"); return; }
+                    setCpwOpen(false); setCpwOld(""); setCpw1(""); setCpw2(""); setCpwErr("");
+                    localStorage.removeItem("hrc_session"); setSession(null);
+                    flash("Password changed — please sign in with your new password");
                   } catch (e) { setCpwErr(e.message || "Could not update"); }
                 }}
-                className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-semibold">Save</button>
+                className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-semibold">Change</button>
             </div>
           </div>
         </div>

@@ -1,5 +1,9 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import App from "./App.jsx";
+import App, { PublicFeedback } from "./App.jsx";
 
-createRoot(document.getElementById("root")).render(<App />);
+const isFeedback = new URLSearchParams(window.location.search).has("fb");
+
+createRoot(document.getElementById("root")).render(
+  isFeedback ? <PublicFeedback /> : <App />
+);
