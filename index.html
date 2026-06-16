@@ -44,12 +44,14 @@
       .hrc-dark .hover\:bg-gray-50:hover { background-color:#222633 !important; }
       .hrc-dark input::placeholder, .hrc-dark textarea::placeholder { color:#6b7280 !important; }
 
+      /* The 80mm thermal print receipt is rendered outside #root; hidden on screen. */
+      #print-area { display: none; }
+
       @media print {
-        body { background:#fff !important; }
-        body * { visibility:hidden !important; }
-        #receipt-print, #receipt-print * { visibility:visible !important; }
-        #receipt-print { position:absolute; left:0; top:0; width:80mm; padding:4mm; }
-        .no-print { display:none !important; }
+        @page { size: 80mm auto; margin: 0; }
+        html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+        #root { display: none !important; }
+        #print-area { display: block !important; }
       }
 
       @keyframes hrcPopIn {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   ShoppingCart, Plus, Minus, Trash2, Printer, MessageCircle, Receipt,
   Package, BarChart3, Settings as SettingsIcon, LogOut, Search, X, Check,
@@ -211,6 +212,54 @@ function Intro({ onDone }) {
         <p className="mt-5 text-white/60 text-xs" style={{ animation: "hrcPopIn 700ms ease-out 1300ms both" }}>Tap anywhere to continue</p>
       </div>
     </div>
+  );
+}
+
+// Thermal-printer receipt (80mm roll). Rendered OUTSIDE the app via a portal so
+// that printing only outputs this — sized to the content, no wasted paper.
+function PrintReceipt({ bill, config }) {
+  if (!bill) return null;
+  const mono = "'Courier New', ui-monospace, Menlo, Consolas, monospace";
+  const Dash = () => <div style={{ borderTop: "1px dashed #000", margin: "1.5mm 0" }} />;
+  const Row = ({ l, r, bold, big }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: "3mm", fontWeight: bold ? 700 : 400, fontSize: big ? "13pt" : undefined, marginTop: big ? "1mm" : undefined }}>
+      <span style={{ wordBreak: "break-word" }}>{l}</span>
+      <span style={{ whiteSpace: "nowrap" }}>{r}</span>
+    </div>
+  );
+  return createPortal(
+    <div id="print-area" style={{ fontFamily: mono, color: "#000" }}>
+      <div style={{ width: "72mm", padding: "2mm 3mm", fontSize: "11pt", lineHeight: 1.35 }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: "15pt", fontWeight: 700, letterSpacing: "0.3px" }}>{config.shopName}</div>
+          {config.address && <div style={{ fontSize: "8.5pt", lineHeight: 1.25 }}>{config.address}</div>}
+          {config.phone && <div style={{ fontSize: "8.5pt" }}>Ph: {config.phone}</div>}
+        </div>
+        <Dash />
+        <Row l={bill.billNo || "(new bill)"} r={fmtDateTime(bill.createdAt)} />
+        {(bill.customerName || bill.customerMobile) && (
+          <div style={{ fontSize: "9pt" }}>Customer: {[bill.customerName, bill.customerMobile].filter(Boolean).join(" | ")}</div>
+        )}
+        {bill.paymentMode && <div style={{ fontSize: "9pt" }}>Payment: {bill.paymentMode === "online" ? "Online" : "Cash"}</div>}
+        <Dash />
+        {bill.lines.map((l, i) => (
+          <div key={i} style={{ marginBottom: "1mm" }}>
+            <div>{l.name}</div>
+            <Row l={`${l.qty} x ${inr(l.price)}`} r={inr(l.amount)} />
+          </div>
+        ))}
+        <Dash />
+        <Row l="Subtotal" r={inr(bill.subtotal)} />
+        {bill.discountAmount > 0 && <Row l="Discount" r={"-" + inr(bill.discountAmount)} />}
+        {Number(bill.additionalCharges) > 0 && <Row l={"Add. charges" + (bill.additionalChargesNote ? ` (${bill.additionalChargesNote})` : "")} r={"+" + inr(bill.additionalCharges)} />}
+        {Number(bill.roundOff) !== 0 && <Row l="Round off" r={(Number(bill.roundOff) > 0 ? "+" : "-") + inr(Math.abs(Number(bill.roundOff)))} />}
+        <Row l="TOTAL" r={inr(bill.total)} bold big />
+        <Dash />
+        <div style={{ fontSize: "9pt" }}>Billed by: {bill.billedBy}</div>
+        <div style={{ textAlign: "center", fontSize: "9pt", marginTop: "3mm" }}>Thank you! Stay safe</div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -2069,6 +2118,7 @@ export default function App() {
       </nav>
 
       {/* ---------------- Receipt modal ---------------- */}
+      {receiptBill && !receiptBill.draft && <PrintReceipt bill={receiptBill} config={config} />}
       {receiptBill && (
         <div className="fixed inset-0 z-40 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white w-full sm:max-w-sm sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto">
