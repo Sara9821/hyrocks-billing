@@ -889,6 +889,8 @@ export default function App() {
   };
   const confirmLogout = () => setConfirmState({
     message: "Log out of Hyrocks?",
+    confirmLabel: "Yes, log out",
+    danger: false,
     onYes: doLogout,
   });
 
@@ -2329,7 +2331,8 @@ export default function App() {
               <button onClick={() => setConfirmState(null)}
                 className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold">Cancel</button>
               <button onClick={() => { confirmState.onYes(); setConfirmState(null); }}
-                className="flex-1 py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold">Yes, delete</button>
+                className={`flex-1 py-2.5 rounded-xl text-white text-sm font-semibold ${confirmState.danger === false ? "bg-indigo-600" : "bg-red-500"}`}>
+                {confirmState.confirmLabel || "Yes, delete"}</button>
             </div>
           </div>
         </div>
