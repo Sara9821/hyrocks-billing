@@ -427,6 +427,7 @@ export default function App() {
   const [pendingPrint, setPendingPrint] = useState(false);
   const sigRef = useRef(null);   // last seen change-signature for live updates
   const bgOutRef = useRef(false); // whether we logged a "logout" because the app went to background
+  const hideTimerRef = useRef(null); // 30-min grace timer while the app is in the background
   const [installEvt, setInstallEvt] = useState(null);  // Chrome's deferred install prompt
   const [exportingCat, setExportingCat] = useState("");  // customer-export category generating
   const [editingItem, setEditingItem] = useState(null);
@@ -481,6 +482,12 @@ export default function App() {
   const [searchEnd, setSearchEnd] = useState("");
   const [searchResults, setSearchResults] = useState(null); // null = not searching
   const [searching, setSearching] = useState(false);
+  // "Total sales" report
+  const [salesPeriod, setSalesPeriod] = useState("today");
+  const [salesStart, setSalesStart] = useState("");
+  const [salesEnd, setSalesEnd] = useState("");
+  const [salesResult, setSalesResult] = useState(null); // {total,count,label}
+  const [salesLoading, setSalesLoading] = useState(false);
 
   const flash = (msg) => { setToast(msg); setTimeout(() => setToast(""), 1800); };
 
@@ -524,7 +531,9 @@ export default function App() {
           if (s.theme === "dark" || s.theme === "light") setTheme(s.theme);
           setSession(s);
           bgOutRef.current = false;
-          markSession(s, "in");
+          const hiddenAt = parseInt(localStorage.getItem("hrc_hidden") || "0", 10);
+          if (!hiddenAt || Date.now() - hiddenAt > 30 * 60 * 1000) markSession(s, "in"); // returning within 30 min stays the same session
+          localStorage.removeItem("hrc_hidden");
         } catch (e) {
           localStorage.removeItem("hrc_session");
         }
@@ -701,6 +710,7 @@ export default function App() {
     const reset = () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
+        if (document.hidden) { reset(); return; } // don't count background time toward the idle limit
         markSession(session, "out");
         localStorage.removeItem("hrc_session");
         setSession(null);
@@ -718,21 +728,24 @@ export default function App() {
   // when the user returns to the foreground.
   useEffect(() => {
     if (!session) return;
+    const GRACE = 30 * 60 * 1000; // brief app-switching within 30 min is not counted as a logout
     const onVis = () => {
       if (document.hidden) {
-        if (!bgOutRef.current) { markSession(session, "out"); bgOutRef.current = true; }
-      } else if (bgOutRef.current) {
-        markSession(session, "in"); bgOutRef.current = false;
+        localStorage.setItem("hrc_hidden", String(Date.now()));
+        clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = setTimeout(() => { markSession(session, "out"); bgOutRef.current = true; }, GRACE);
+      } else {
+        clearTimeout(hideTimerRef.current);
+        localStorage.removeItem("hrc_hidden");
+        if (bgOutRef.current) { markSession(session, "in"); bgOutRef.current = false; }
       }
     };
-    const onHide = () => { if (!bgOutRef.current) { markSession(session, "out"); bgOutRef.current = true; } };
     const onBeforeUnload = (e) => { e.preventDefault(); e.returnValue = ""; };
     document.addEventListener("visibilitychange", onVis);
-    window.addEventListener("pagehide", onHide);
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => {
+      clearTimeout(hideTimerRef.current);
       document.removeEventListener("visibilitychange", onVis);
-      window.removeEventListener("pagehide", onHide);
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
   }, [session]);
@@ -862,6 +875,7 @@ export default function App() {
       setSession(sess);
       setScreen("billing");
       bgOutRef.current = false;
+      localStorage.removeItem("hrc_hidden");
       markSession(sess, "in");
       await refresh(sess);
     } catch (e) { setLoginErr(e.message || "Login failed"); }
@@ -1430,6 +1444,31 @@ export default function App() {
   };
   const clearSearch = () => { setSearchResults(null); setSearchQ(""); setSearchStart(""); setSearchEnd(""); };
 
+  // IST calendar date (YYYY-MM-DD) offset by N days back.
+  const istDateStr = (offsetDays = 0) => {
+    const ist = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    ist.setDate(ist.getDate() - offsetDays);
+    const y = ist.getFullYear(), m = String(ist.getMonth() + 1).padStart(2, "0"), d = String(ist.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  };
+  const runSalesTotal = async () => {
+    let start, end, label;
+    if (salesPeriod === "custom") {
+      if (!salesStart || !salesEnd) { flash("Pick a start and end date"); return; }
+      start = salesStart; end = salesEnd; label = `${salesStart} to ${salesEnd}`;
+    } else {
+      const map = { today: [0, "Today"], week: [6, "Last week"], month: [29, "Last month"], quarter: [89, "Last quarter"], half: [179, "Last half year"], year: [364, "Last year"] };
+      const [days, lbl] = map[salesPeriod] || [0, "Today"];
+      start = istDateStr(days); end = istDateStr(0); label = lbl;
+    }
+    setSalesLoading(true);
+    try {
+      const r = await rpc("sales_total", { p_actor: session.id, p_token: session.token, p_start: start, p_end: end });
+      setSalesResult({ total: Number(r.total) || 0, count: Number(r.count) || 0, label });
+    } catch (e) { handleErr(e); }
+    setSalesLoading(false);
+  };
+
   const renderReports = () => {
     const myToday = (todayStats.byStaff.find((s) => s.name === session.name) || {}).count || 0;
     const list = (isManager && searchResults !== null) ? searchResults : bills.slice(0, 100);
@@ -1469,6 +1508,45 @@ export default function App() {
                 <p className="text-xs text-gray-500">Bills made</p>
                 <p className="text-2xl font-extrabold text-gray-900 mt-1">{todayStats.count}</p>
               </div>
+            </div>
+
+            <p className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1.5">Total sales</p>
+            <div className="bg-white rounded-2xl border border-gray-200 p-3 mb-5 space-y-2">
+              <select value={salesPeriod} onChange={(e) => { setSalesPeriod(e.target.value); setSalesResult(null); }}
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:border-orange-400">
+                <option value="today">Today</option>
+                <option value="week">Last week</option>
+                <option value="month">Last month</option>
+                <option value="quarter">Last quarter</option>
+                <option value="half">Last half year</option>
+                <option value="year">Last year</option>
+                <option value="custom">Custom range</option>
+              </select>
+              {salesPeriod === "custom" && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] text-gray-500">From</label>
+                    <input type="date" value={salesStart} onChange={(e) => { setSalesStart(e.target.value); setSalesResult(null); }}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-gray-500">To</label>
+                    <input type="date" value={salesEnd} onChange={(e) => { setSalesEnd(e.target.value); setSalesResult(null); }}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
+                  </div>
+                </div>
+              )}
+              <button onClick={runSalesTotal} disabled={salesLoading}
+                className="w-full py-2.5 rounded-xl bg-orange-500 text-white text-sm font-semibold disabled:opacity-50">
+                {salesLoading ? "Calculating…" : "Show total"}
+              </button>
+              {salesResult && (
+                <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-center">
+                  <p className="text-xs text-gray-600">{salesResult.label}</p>
+                  <p className="text-2xl font-extrabold text-emerald-700 mt-0.5">{inr(salesResult.total)}</p>
+                  <p className="text-xs text-gray-500">over {salesResult.count} bill{salesResult.count === 1 ? "" : "s"}</p>
+                </div>
+              )}
             </div>
 
             <p className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1.5">Who billed what (today)</p>
@@ -2071,17 +2149,18 @@ export default function App() {
               <div>
                 <label className="text-xs font-semibold text-gray-500">Name (username)</label>
                 <input value={editingUser.name} onChange={(e) => setEditingUser({ ...editingUser, name: e.target.value })}
-                  disabled={!isManager || (editingUser.id === session.id && !isOwner)}
+                  disabled={!(isOwner || (session.role === "admin" && !editingUser.id))}
                   autoCapitalize="none"
-                  className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400 disabled:bg-gray-50" />
+                  className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400 disabled:bg-gray-50 disabled:text-gray-500" />
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-500">Phone (for password reset)</label>
                 <input value={editingUser.phone || ""} onChange={(e) => setEditingUser({ ...editingUser, phone: e.target.value })}
+                  disabled={!(isOwner || (session.role === "admin" && !editingUser.id))}
                   inputMode="tel" placeholder="10-digit mobile number"
-                  className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
+                  className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400 disabled:bg-gray-50 disabled:text-gray-500" />
               </div>
-              {editingUser.id !== session.id && (
+              {((!editingUser.id) || (editingUser.id !== session.id && (isOwner || (session.role === "admin" && editingUser.role === "user")))) && (
                 <div>
                   <label className="text-xs font-semibold text-gray-500">{editingUser.id ? "Reset password" : "Password"}</label>
                   <input type="password" value={editingUser.password || ""} onChange={(e) => setEditingUser({ ...editingUser, password: e.target.value })}
