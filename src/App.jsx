@@ -53,7 +53,7 @@ function downloadBillPdf(jsPDF, bill, shop) {
   };
   row("Subtotal", pdfInr(bill.subtotal));
   if (bill.discountAmount > 0) row("Discount", "- " + pdfInr(bill.discountAmount));
-  if (Number(bill.additionalCharges) > 0) row("Additional charges", "+ " + pdfInr(bill.additionalCharges));
+  if (Number(bill.additionalCharges) > 0) row("Additional charges" + (bill.additionalChargesNote ? " (" + bill.additionalChargesNote + ")" : ""), "+ " + pdfInr(bill.additionalCharges));
   if (Number(bill.roundOff) !== 0) row("Round off", (Number(bill.roundOff) > 0 ? "+ " : "- ") + pdfInr(Math.abs(Number(bill.roundOff))));
   row("TOTAL", pdfInr(bill.total), true);
   y += 10; doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(120);
@@ -109,6 +109,109 @@ function downloadCustomerPdf(jsPDF, label, rows, shopName) {
   doc.setFont("helvetica", "bold"); doc.setFontSize(11);
   doc.text("Grand total", colMobile, y); doc.text(pdfInr(grand), colTotal, y, { align: "right" });
   doc.save("Customers-" + label.replace(/[^a-z0-9]+/gi, "-").toLowerCase() + ".pdf");
+}
+
+/* ================================================================== */
+/* Fireworks intro splash — rockets rise from the bottom and burst,    */
+/* then the logo pops in. Tap to skip. Shown when the app starts.      */
+/* ================================================================== */
+function Intro({ onDone }) {
+  const canvasRef = useRef(null);
+  const [fading, setFading] = useState(false);
+  const doneRef = useRef(false);
+
+  const finish = () => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    setFading(true);
+    setTimeout(onDone, 600);
+  };
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    let W = 0, H = 0, dpr = 1, raf;
+    const resize = () => {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = canvas.clientWidth; H = canvas.clientHeight;
+      canvas.width = W * dpr; canvas.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
+    window.addEventListener("resize", resize);
+
+    const colors = ["#ff5252", "#ffb300", "#ffee58", "#26c6da", "#ab47bc", "#ff7043", "#fff176", "#69f0ae", "#ff4081"];
+    const rockets = [];
+    const sparks = [];
+    const start = performance.now();
+    let lastLaunch = -999;
+    const g = 0.34; // rocket gravity per frame
+
+    const launch = () => {
+      const x = W * (0.15 + Math.random() * 0.7);
+      const targetY = H * (0.15 + Math.random() * 0.3);
+      rockets.push({ x, y: H + 8, vy: -Math.sqrt(2 * g * (H - targetY)) * (0.95 + Math.random() * 0.1), color: colors[(Math.random() * colors.length) | 0], trail: [] });
+    };
+    const burst = (x, y, color) => {
+      const n = 40 + ((Math.random() * 22) | 0);
+      for (let i = 0; i < n; i++) {
+        const a = (Math.PI * 2 * i) / n + Math.random() * 0.25;
+        const sp = 1.4 + Math.random() * 3.4;
+        sparks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1, color, size: 1.4 + Math.random() * 1.6 });
+      }
+    };
+
+    const tick = (t) => {
+      const elapsed = t - start;
+      ctx.fillStyle = "rgba(8,6,16,0.30)";
+      ctx.fillRect(0, 0, W, H);
+
+      if (elapsed - lastLaunch > 280 && elapsed < 2000) { launch(); lastLaunch = elapsed; }
+
+      for (let i = rockets.length - 1; i >= 0; i--) {
+        const r = rockets[i];
+        r.trail.push({ x: r.x, y: r.y });
+        if (r.trail.length > 9) r.trail.shift();
+        r.y += r.vy; r.vy += g;
+        r.trail.forEach((p, j) => {
+          ctx.globalAlpha = (j / r.trail.length) * 0.7;
+          ctx.fillStyle = r.color;
+          ctx.beginPath(); ctx.arc(p.x, p.y, 1.7, 0, 7); ctx.fill();
+        });
+        ctx.globalAlpha = 1; ctx.fillStyle = "#fff";
+        ctx.beginPath(); ctx.arc(r.x, r.y, 2.1, 0, 7); ctx.fill();
+        if (r.vy >= -0.5) { burst(r.x, r.y, r.color); rockets.splice(i, 1); }
+      }
+      for (let i = sparks.length - 1; i >= 0; i--) {
+        const s = sparks[i];
+        s.x += s.vx; s.y += s.vy; s.vy += 0.05; s.vx *= 0.985; s.vy *= 0.985; s.life -= 0.0125;
+        if (s.life <= 0) { sparks.splice(i, 1); continue; }
+        ctx.globalAlpha = Math.max(s.life, 0);
+        ctx.fillStyle = s.color;
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, 7); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      if (elapsed > 2700) finish();
+      if (!doneRef.current || sparks.length) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
+  }, []);
+
+  return (
+    <div onClick={finish}
+      className={`fixed inset-0 z-[60] flex flex-col items-center justify-center transition-opacity duration-[600ms] ${fading ? "opacity-0" : "opacity-100"}`}
+      style={{ background: "radial-gradient(ellipse at 50% 120%, #2a1b3d 0%, #120c1f 55%, #070510 100%)" }}>
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+      <div className="relative z-10 flex flex-col items-center px-6 text-center">
+        <img src={LOGO_DATA_URI} alt="Hyrocks Crackers" className="w-28 h-28 rounded-2xl object-cover shadow-2xl"
+          style={{ animation: "hrcPopIn 800ms ease-out 450ms both" }} />
+        <p className="mt-5 text-white/60 text-xs" style={{ animation: "hrcPopIn 700ms ease-out 1300ms both" }}>Tap anywhere to continue</p>
+      </div>
+    </div>
+  );
 }
 
 /* ================================================================== */
@@ -261,7 +364,7 @@ function receiptText(bill, config) {
   t += `------------------------------\n${lines}\n------------------------------\n`;
   t += `Subtotal: ${inr(bill.subtotal)}\n`;
   if (bill.discountAmount > 0) t += `Discount: -${inr(bill.discountAmount)}\n`;
-  if (Number(bill.additionalCharges) > 0) t += `Additional charges: +${inr(bill.additionalCharges)}\n`;
+  if (Number(bill.additionalCharges) > 0) t += `Additional charges${bill.additionalChargesNote ? " (" + bill.additionalChargesNote + ")" : ""}: +${inr(bill.additionalCharges)}\n`;
   if (Number(bill.roundOff) !== 0) t += `Round off: ${Number(bill.roundOff) > 0 ? "+" : "-"}${inr(Math.abs(Number(bill.roundOff)))}\n`;
   t += `*TOTAL: ${inr(bill.total)}*\n`;
   t += `------------------------------\nBilled by: ${bill.billedBy}\nThank you! Have a safe & happy celebration 🎆`;
@@ -339,7 +442,7 @@ export function PublicBill() {
         <div className="border-t border-dashed border-gray-300 my-2" />
         <div className="flex justify-between text-xs"><span>Subtotal</span><span>{inr(bill.subtotal)}</span></div>
         {bill.discountAmount > 0 && <div className="flex justify-between text-xs"><span>Discount</span><span>- {inr(bill.discountAmount)}</span></div>}
-        {Number(bill.additionalCharges) > 0 && <div className="flex justify-between text-xs"><span>Additional charges</span><span>+ {inr(bill.additionalCharges)}</span></div>}
+        {Number(bill.additionalCharges) > 0 && <div className="flex justify-between text-xs"><span>Additional charges{bill.additionalChargesNote ? ` (${bill.additionalChargesNote})` : ""}</span><span>+ {inr(bill.additionalCharges)}</span></div>}
         {Number(bill.roundOff) !== 0 && <div className="flex justify-between text-xs"><span>Round off</span><span>{Number(bill.roundOff) > 0 ? "+ " : "- "}{inr(Math.abs(Number(bill.roundOff)))}</span></div>}
         <div className="flex justify-between font-bold mt-1"><span>Total</span><span>{inr(bill.total)}</span></div>
       </div>
@@ -396,6 +499,7 @@ export function PublicBill() {
 /* App                                                                */
 /* ================================================================== */
 export default function App() {
+  const [showIntro, setShowIntro] = useState(true); // fireworks splash on app start
   const [loading, setLoading] = useState(true);
   const [config, setConfigState] = useState({ shopName: "Hyrocks Crackers", address: "", phone: "", nextBillNo: 1 });
   const [users, setUsersState] = useState([]);
@@ -416,7 +520,9 @@ export default function App() {
   const [discType, setDiscType] = useState("percent"); // percent | amount
   const [discVal, setDiscVal] = useState("");
   const [addCharge, setAddCharge] = useState("");   // extra charges added to the bill
-  const [roundOff, setRoundOff] = useState("");     // round-off adjustment (+/-)
+  const [addChargeNote, setAddChargeNote] = useState(""); // what the charge is for
+  const [roundOff, setRoundOff] = useState("");     // round-off magnitude (always positive)
+  const [roundSign, setRoundSign] = useState("minus"); // "plus" | "minus"
   const [custInfo, setCustInfo] = useState(null);   // returning-customer lookup {exists,count,total,name}
   const [showCustHist, setShowCustHist] = useState(false);
 
@@ -774,9 +880,9 @@ export default function App() {
     const amt = discType === "percent" ? (subtotal * v) / 100 : v;
     return Math.min(Math.max(amt, 0), subtotal);
   }, [discVal, discType, subtotal]);
-  const total = Math.max(subtotal - discountAmount + (Math.max(Number(addCharge) || 0, 0)) + (Number(roundOff) || 0), 0);
   const addChargeAmt = Math.max(Number(addCharge) || 0, 0);
-  const roundOffAmt = Number(roundOff) || 0;
+  const roundOffAmt = (roundSign === "minus" ? -1 : 1) * Math.max(Number(roundOff) || 0, 0);
+  const total = Math.max(subtotal - discountAmount + addChargeAmt + roundOffAmt, 0);
 
   /* ---- cart actions ---- */
   const addToCart = (item) => {
@@ -808,6 +914,7 @@ export default function App() {
   };
   const clearBill = () => {
     setCart([]); setCustName(""); setCustMobile(""); setDiscVal(""); setAddCharge(""); setRoundOff("");
+    setAddChargeNote(""); setRoundSign("minus");
     setCustInfo(null); setShowCustHist(false);
   };
 
@@ -819,6 +926,7 @@ export default function App() {
     discountValue: Number(discVal) || 0,
     discountAmount,
     additionalCharges: addChargeAmt,
+    additionalChargesNote: addChargeAmt > 0 ? addChargeNote.trim() : "",
     roundOff: roundOffAmt,
     total,
     customerName: custName.trim(),
@@ -942,6 +1050,7 @@ export default function App() {
   /* ================================================================ */
   /* Loading / Login screens                                          */
   /* ================================================================ */
+  if (showIntro) return <Intro onDone={() => setShowIntro(false)} />;
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 text-gray-500">
@@ -1300,16 +1409,31 @@ export default function App() {
                 className="w-24 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-right focus:outline-none focus:border-orange-400"
               />
             </div>
+            {Number(addCharge) > 0 && (
+              <input
+                value={addChargeNote}
+                onChange={(e) => setAddChargeNote(e.target.value)}
+                placeholder="What is this charge for? (e.g. Delivery, Packing)"
+                maxLength={120}
+                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400"
+              />
+            )}
 
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-500 flex-1">Round off</span>
+              <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                <button type="button" onClick={() => setRoundSign("plus")}
+                  className={`px-3 py-1.5 text-sm font-bold ${roundSign === "plus" ? "bg-orange-500 text-white" : "text-gray-600"}`}>+</button>
+                <button type="button" onClick={() => setRoundSign("minus")}
+                  className={`px-3 py-1.5 text-sm font-bold ${roundSign === "minus" ? "bg-orange-500 text-white" : "text-gray-600"}`}>−</button>
+              </div>
               <span className="text-gray-400 text-sm">₹</span>
               <input
                 value={roundOff}
                 onChange={(e) => setRoundOff(e.target.value)}
                 placeholder="0"
-                inputMode="text"
-                className="w-24 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-right focus:outline-none focus:border-orange-400"
+                inputMode="decimal"
+                className="w-20 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-right focus:outline-none focus:border-orange-400"
               />
             </div>
 
@@ -1324,7 +1448,7 @@ export default function App() {
               )}
               {addChargeAmt > 0 && (
                 <div className="flex justify-between text-gray-600">
-                  <span>Additional charges</span><span>+{inr(addChargeAmt)}</span>
+                  <span>Additional charges{addChargeNote.trim() ? ` (${addChargeNote.trim()})` : ""}</span><span>+{inr(addChargeAmt)}</span>
                 </div>
               )}
               {roundOffAmt !== 0 && (
@@ -1989,7 +2113,7 @@ export default function App() {
                 <div className="flex justify-between"><span>Discount</span><span>-{inr(receiptBill.discountAmount)}</span></div>
               )}
               {Number(receiptBill.additionalCharges) > 0 && (
-                <div className="flex justify-between"><span>Additional charges</span><span>+{inr(receiptBill.additionalCharges)}</span></div>
+                <div className="flex justify-between"><span>Additional charges{receiptBill.additionalChargesNote ? ` (${receiptBill.additionalChargesNote})` : ""}</span><span>+{inr(receiptBill.additionalCharges)}</span></div>
               )}
               {Number(receiptBill.roundOff) !== 0 && (
                 <div className="flex justify-between"><span>Round off</span><span>{Number(receiptBill.roundOff) > 0 ? "+" : "-"}{inr(Math.abs(Number(receiptBill.roundOff)))}</span></div>
