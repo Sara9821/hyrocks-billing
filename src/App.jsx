@@ -73,6 +73,44 @@ function downloadBillPdf(jsPDF, bill, shop) {
   }
 }
 
+// Build & download a PDF list of customers (name, mobile, total spent).
+function downloadCustomerPdf(jsPDF, label, rows, shopName) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const left = 40, right = 555;
+  let y = 50;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(16);
+  doc.text(shopName || "Hyrocks Crackers", left, y); y += 20;
+  doc.setFontSize(12); doc.text("Customer data — " + label, left, y); y += 16;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(90);
+  doc.text(new Date().toLocaleString("en-IN") + "   ·   " + rows.length + " customer" + (rows.length === 1 ? "" : "s"), left, y); y += 8;
+  doc.setTextColor(0);
+  doc.setDrawColor(200); doc.line(left, y, right, y); y += 16;
+  const colNo = left, colName = left + 32, colMobile = 320, colTotal = right;
+  const header = () => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+    doc.text("#", colNo, y); doc.text("Customer", colName, y);
+    doc.text("Mobile", colMobile, y); doc.text("Total spent", colTotal, y, { align: "right" });
+    y += 6; doc.setDrawColor(220); doc.line(left, y, right, y); y += 14;
+    doc.setFont("helvetica", "normal");
+  };
+  header();
+  let grand = 0;
+  rows.forEach((r, i) => {
+    if (y > 790) { doc.addPage(); y = 50; header(); }
+    const name = doc.splitTextToSize(r.name || "—", colMobile - colName - 12);
+    doc.text(String(i + 1), colNo, y);
+    doc.text(name, colName, y);
+    doc.text(r.mobile || "—", colMobile, y);
+    doc.text(pdfInr(r.total), colTotal, y, { align: "right" });
+    grand += Number(r.total) || 0;
+    y += Math.max(name.length * 12, 15);
+  });
+  y += 4; doc.setDrawColor(200); doc.line(left, y, right, y); y += 16;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+  doc.text("Grand total", colMobile, y); doc.text(pdfInr(grand), colTotal, y, { align: "right" });
+  doc.save("Customers-" + label.replace(/[^a-z0-9]+/gi, "-").toLowerCase() + ".pdf");
+}
+
 /* ================================================================== */
 /* Shared shell for the public bill page (defined OUTSIDE the page    */
 /* component so typing in the feedback box doesn't remount the inputs) */
@@ -379,6 +417,8 @@ export default function App() {
   const [discVal, setDiscVal] = useState("");
   const [addCharge, setAddCharge] = useState("");   // extra charges added to the bill
   const [roundOff, setRoundOff] = useState("");     // round-off adjustment (+/-)
+  const [custInfo, setCustInfo] = useState(null);   // returning-customer lookup {exists,count,total,name}
+  const [showCustHist, setShowCustHist] = useState(false);
 
   // modals
   const [receiptBill, setReceiptBill] = useState(null);
@@ -387,6 +427,7 @@ export default function App() {
   const [pendingPrint, setPendingPrint] = useState(false);
   const sigRef = useRef(null);   // last seen change-signature for live updates
   const [installEvt, setInstallEvt] = useState(null);  // Chrome's deferred install prompt
+  const [exportingCat, setExportingCat] = useState("");  // customer-export category generating
   const [editingItem, setEditingItem] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
   const [confirmState, setConfirmState] = useState(null); // {message, onYes}
@@ -615,6 +656,40 @@ export default function App() {
     setInstallEvt(null);
   };
 
+  // Export a customer-purchase PDF for the chosen frequency category (Super Admin).
+  const exportCustomers = async (catKey, label) => {
+    if (exportingCat) return;
+    setExportingCat(catKey);
+    try {
+      const summary = (await rpc("customer_summary", { p_actor: session.id, p_token: session.token })) || [];
+      const rows = summary.filter((c) => {
+        const n = Number(c.count) || 0;
+        if (catKey === "1") return n === 1;
+        if (catKey === "2") return n === 2;
+        if (catKey === "3") return n === 3;
+        return n >= 4; // multiple
+      });
+      if (rows.length === 0) { flash("No customers in this category yet"); setExportingCat(""); return; }
+      const m = await import("jspdf");
+      downloadCustomerPdf(m.jsPDF, label, rows, config.shopName);
+    } catch (e) { handleErr(e); }
+    setExportingCat("");
+  };
+
+  // While billing, look up whether the entered mobile is a returning customer.
+  useEffect(() => {
+    const digits = (custMobile || "").replace(/\D/g, "");
+    if (!session || digits.length < 10) { setCustInfo(null); setShowCustHist(false); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const r = await rpc("customer_lookup", { p_actor: session.id, p_token: session.token, p_mobile: digits });
+        if (!cancelled) { setCustInfo(r && r.exists ? r : null); setShowCustHist(false); }
+      } catch (e) { /* ignore lookup errors */ }
+    }, 450);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [custMobile, session]);
+
   // Auto sign-out after 15 minutes of inactivity.
   useEffect(() => {
     if (!session) return;
@@ -692,6 +767,7 @@ export default function App() {
   };
   const clearBill = () => {
     setCart([]); setCustName(""); setCustMobile(""); setDiscVal(""); setAddCharge(""); setRoundOff("");
+    setCustInfo(null); setShowCustHist(false);
   };
 
   // Build the bill payload from the current cart (used for preview + saving).
@@ -1115,6 +1191,25 @@ export default function App() {
                 className="px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400"
               />
             </div>
+
+            {custInfo && custInfo.exists && (
+              <div>
+                <button onClick={() => setShowCustHist((v) => !v)}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-left">
+                  <Star className="w-4 h-4 text-amber-500 fill-amber-400 shrink-0" />
+                  <span className="text-sm font-semibold text-amber-800 flex-1">
+                    Returning customer{custInfo.name ? ` · ${custInfo.name}` : ""}
+                  </span>
+                  <span className="text-xs text-amber-700">{showCustHist ? "Hide" : "View history"}</span>
+                </button>
+                {showCustHist && (
+                  <div className="mt-1.5 px-3 py-2 rounded-lg bg-white border border-amber-200 text-sm text-gray-700">
+                    Past purchases: <span className="font-bold text-gray-900">{custInfo.count}</span> bill{custInfo.count === 1 ? "" : "s"} ·
+                    total spent <span className="font-bold text-emerald-600">{inr(custInfo.total)}</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-500">Discount</span>
@@ -1594,6 +1689,28 @@ export default function App() {
           <p className="text-xs text-gray-400 mt-2">
             {isOwner ? "Tap a user to reset password, set their role, block, or remove them." : "Tap a user to reset password, block, or remove them. Only the Super Admin can assign roles."}
           </p>
+        </div>
+      )}
+
+      {isOwner && (
+        <div>
+          <h2 className="text-lg font-bold text-gray-900 mb-3">Customer data export</h2>
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <p className="text-xs text-gray-500 mb-3">Download a PDF of customers grouped by how many times they've purchased — with name, mobile number, and total amount spent overall.</p>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { k: "1", label: "1-time customers" },
+                { k: "2", label: "2-time customers" },
+                { k: "3", label: "3-time customers" },
+                { k: "multiple", label: "4+ times (regulars)" },
+              ].map((o) => (
+                <button key={o.k} onClick={() => exportCustomers(o.k, o.label)} disabled={!!exportingCat}
+                  className="px-3 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-700 hover:border-orange-400 disabled:opacity-50">
+                  {exportingCat === o.k ? "Preparing…" : o.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
