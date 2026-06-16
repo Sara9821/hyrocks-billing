@@ -1237,7 +1237,7 @@ export default function App() {
   /* ================================================================ */
 
   const renderBilling = () => (
-    <div className="max-w-5xl mx-auto px-3 pb-40 pt-3 md:grid md:grid-cols-5 md:gap-4">
+    <div className="max-w-7xl mx-auto px-3 pb-40 pt-3 md:grid md:grid-cols-5 md:gap-4">
       {/* Items */}
       <div className="md:col-span-3">
         <div className="sticky top-[57px] z-10 bg-slate-50 pt-2 pb-2">
@@ -1265,7 +1265,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 mt-2">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 mt-2">
           {visibleItems.map((it) => {
             const inCart = cart.find((l) => l.id === it.id);
             const left = (it.stock || 0) - (inCart?.qty || 0);
@@ -1478,7 +1478,7 @@ export default function App() {
     const totalUnits = items.reduce((s, i) => s + (i.stock || 0), 0);
     const totalValue = items.reduce((s, i) => s + (i.stock || 0) * i.price, 0);
     return (
-    <div className="max-w-3xl mx-auto px-3 pb-32 pt-4">
+    <div className="max-w-6xl mx-auto px-3 pb-32 pt-4">
       <div className="flex items-center gap-2 mb-3">
         <h2 className="text-lg font-bold text-gray-900">Items & stock</h2>
         {isManager ? (
@@ -1510,11 +1510,12 @@ export default function App() {
         <p className="text-gray-400 text-center py-10">No items yet — add your first one.</p>
       )}
 
+      <div className="md:columns-2 xl:columns-3 md:gap-4">
       {categories.map((c) => {
         const catItems = items.filter((i) => i.category === c);
         const catUnits = catItems.reduce((s, i) => s + (i.stock || 0), 0);
         return (
-        <div key={c} className="mb-4">
+        <div key={c} className="mb-4 break-inside-avoid">
           <div className="flex items-center justify-between mb-1.5 px-1">
             <p className="text-xs font-bold text-amber-600 uppercase tracking-wide">{c}</p>
             <p className="text-xs font-semibold text-gray-400">{catUnits} left</p>
@@ -1541,6 +1542,7 @@ export default function App() {
         </div>
         );
       })}
+      </div>
 
       {isManager && items.length > 0 && (
         <div className="mt-6 flex justify-center">
@@ -1599,7 +1601,7 @@ export default function App() {
     const myToday = (todayStats.byStaff.find((s) => s.name === session.name) || {}).count || 0;
     const list = (isManager && searchResults !== null) ? searchResults : bills.slice(0, 100);
     const billRow = (b) => (
-      <div key={b.id} className="flex items-center px-3 py-2.5 hover:bg-gray-50">
+      <div key={b.id} className="flex items-center px-3 py-2.5 bg-white rounded-xl border border-gray-200 hover:border-orange-400">
         <button onClick={() => setReceiptBill(b)} className="flex items-center flex-1 min-w-0 text-left">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-gray-900">{b.billNo}</p>
@@ -1620,7 +1622,8 @@ export default function App() {
     );
 
     return (
-      <div className="max-w-3xl mx-auto px-3 pb-32 pt-4">
+      <div className="max-w-6xl mx-auto px-3 pb-32 pt-4">
+        <div className="lg:max-w-2xl">
         {isManager && (
           <>
             <h2 className="text-lg font-bold text-gray-900 mb-3">Today's sales</h2>
@@ -1737,17 +1740,18 @@ export default function App() {
             <p className="text-2xl font-extrabold text-gray-900 mt-1">{myToday}</p>
           </div>
         )}
+        </div>
 
         <p className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1.5">
           {(isManager && searchResults !== null) ? `Search results (${searchResults.length})` : "Recent bills (latest 100)"}
         </p>
-        <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-50">
-          {list.length === 0 ? (
-            <p className="text-sm text-gray-400 px-3 py-4">{(isManager && searchResults !== null) ? "No bills match your search." : "No bills made yet."}</p>
-          ) : (
-            list.map(billRow)
-          )}
-        </div>
+        {list.length === 0 ? (
+          <p className="text-sm text-gray-400 px-3 py-4 bg-white rounded-xl border border-gray-200">{(isManager && searchResults !== null) ? "No bills match your search." : "No bills made yet."}</p>
+        ) : (
+          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2">
+            {list.map(billRow)}
+          </div>
+        )}
       </div>
     );
   };
@@ -1755,7 +1759,7 @@ export default function App() {
   const renderLogs = () => {
     const filtered = logFilter === "all" ? logs : logs.filter((l) => l.byId === logFilter);
     return (
-      <div className="max-w-3xl mx-auto px-3 pb-32 pt-4">
+      <div className="max-w-4xl mx-auto px-3 pb-32 pt-4">
         <div className="flex items-center gap-2 mb-3">
           <h2 className="text-lg font-bold text-gray-900">Activity log</h2>
           <select value={logFilter} onChange={(e) => setLogFilter(e.target.value)}
@@ -1801,7 +1805,7 @@ export default function App() {
     const unread = feedback.filter((f) => !f.read).length;
     const avg = feedback.length ? feedback.reduce((s, f) => s + f.rating, 0) / feedback.length : 0;
     return (
-      <div className="max-w-2xl mx-auto px-3 pb-32 pt-4 space-y-4">
+      <div className="max-w-6xl mx-auto px-3 pb-32 pt-4 space-y-4">
         <div className="flex items-center">
           <div>
             <h2 className="text-lg font-bold text-gray-900">Customer feedback</h2>
@@ -1824,7 +1828,7 @@ export default function App() {
             No feedback yet. It shows up here when customers rate you using the link on their WhatsApp bill.
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2 items-start">
             {feedback.map((f) => (
               <button key={f.id} onClick={() => markFeedbackRead(f)}
                 className={`w-full text-left rounded-2xl border p-3 transition ${f.read ? "bg-white border-gray-200" : "bg-amber-50 border-amber-200"}`}>
@@ -1850,7 +1854,7 @@ export default function App() {
   };
 
   const renderSettings = () => (
-    <div className="max-w-2xl mx-auto px-3 pb-32 pt-4 space-y-6">
+    <div className="max-w-3xl mx-auto px-3 pb-32 pt-4 space-y-6">
       <div>
         <h2 className="text-lg font-bold text-gray-900 mb-3">Your account</h2>
         <div className="bg-white rounded-2xl border border-gray-200 p-4 flex items-center">
@@ -2001,7 +2005,7 @@ export default function App() {
 
       {/* top bar */}
       <header className="sticky top-0 z-20 bg-indigo-950 text-white">
-        <div className="max-w-5xl mx-auto px-4 h-[57px] flex items-center">
+        <div className="max-w-7xl mx-auto px-4 h-[57px] flex items-center">
           <img src={LOGO_DATA_URI} alt="" className="w-7 h-7 rounded-md object-cover mr-2" />
           <span className="font-bold tracking-tight">{config.shopName}</span>
           <div className="ml-auto flex items-center gap-2">
@@ -2020,7 +2024,7 @@ export default function App() {
       {/* Install-app banner (appears when the phone/browser is ready to install) */}
       {installEvt && (
         <div className="no-print bg-indigo-50 border-b border-indigo-100 px-4 py-2.5">
-          <div className="max-w-5xl mx-auto flex items-center gap-3">
+          <div className="max-w-7xl mx-auto flex items-center gap-3">
             <img src={LOGO_DATA_URI} alt="" className="w-8 h-8 rounded-lg object-cover" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-indigo-950 leading-tight">Install the Hyrocks app</p>
@@ -2042,7 +2046,7 @@ export default function App() {
 
       {/* bottom nav */}
       <nav className="fixed bottom-0 inset-x-0 z-20 bg-white border-t border-gray-200">
-        <div className="max-w-5xl mx-auto grid" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
+        <div className="max-w-7xl mx-auto grid" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
           {tabs.map((t) => {
             const Icon = t.icon;
             const active = screen === t.id;
