@@ -426,6 +426,7 @@ export default function App() {
   const [payMode, setPayMode] = useState("");   // 'cash' | 'online' (required before recording)
   const [pendingPrint, setPendingPrint] = useState(false);
   const sigRef = useRef(null);   // last seen change-signature for live updates
+  const bgOutRef = useRef(false); // whether we logged a "logout" because the app went to background
   const [installEvt, setInstallEvt] = useState(null);  // Chrome's deferred install prompt
   const [exportingCat, setExportingCat] = useState("");  // customer-export category generating
   const [editingItem, setEditingItem] = useState(null);
@@ -522,6 +523,8 @@ export default function App() {
           await refresh(s);                 // validates token + loads data
           if (s.theme === "dark" || s.theme === "light") setTheme(s.theme);
           setSession(s);
+          bgOutRef.current = false;
+          markSession(s, "in");
         } catch (e) {
           localStorage.removeItem("hrc_session");
         }
@@ -698,6 +701,7 @@ export default function App() {
     const reset = () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
+        markSession(session, "out");
         localStorage.removeItem("hrc_session");
         setSession(null);
         flash("Signed out after 15 minutes of inactivity");
@@ -707,6 +711,30 @@ export default function App() {
     evs.forEach((e) => window.addEventListener(e, reset, { passive: true }));
     reset();
     return () => { clearTimeout(timer); evs.forEach((e) => window.removeEventListener(e, reset)); };
+  }, [session]);
+
+  // Treat leaving / backgrounding the app as a logout (so background time is
+  // not counted as active), warn before the app is closed, and log back in
+  // when the user returns to the foreground.
+  useEffect(() => {
+    if (!session) return;
+    const onVis = () => {
+      if (document.hidden) {
+        if (!bgOutRef.current) { markSession(session, "out"); bgOutRef.current = true; }
+      } else if (bgOutRef.current) {
+        markSession(session, "in"); bgOutRef.current = false;
+      }
+    };
+    const onHide = () => { if (!bgOutRef.current) { markSession(session, "out"); bgOutRef.current = true; } };
+    const onBeforeUnload = (e) => { e.preventDefault(); e.returnValue = ""; };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", onHide);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
   }, [session]);
 
   /* ---- derived ---- */
@@ -817,6 +845,12 @@ export default function App() {
   };
 
   /* ---- login / logout ---- */
+  // Best-effort "Logged in / Logged out" activity log.
+  const markSession = (sess, event) => {
+    if (!sess) return;
+    try { rpc("mark_session", { p_actor: sess.id, p_token: sess.token, p_event: event }); } catch (e) {}
+  };
+
   const doLogin = async () => {
     try {
       const r = await rpc("verify_login", { p_username: loginName.trim(), p_password: loginPin });
@@ -827,15 +861,22 @@ export default function App() {
       setLoginErr(""); setLoginPin(""); setShowLoginPw(false);
       setSession(sess);
       setScreen("billing");
+      bgOutRef.current = false;
+      markSession(sess, "in");
       await refresh(sess);
     } catch (e) { setLoginErr(e.message || "Login failed"); }
   };
 
   const doLogout = () => {
+    markSession(session, "out");
     localStorage.removeItem("hrc_session");
     setSession(null);
     setScreen("billing");
   };
+  const confirmLogout = () => setConfirmState({
+    message: "Log out of Hyrocks?",
+    onYes: doLogout,
+  });
 
   const copyText = async (txt) => {
     try {
@@ -1390,8 +1431,8 @@ export default function App() {
   const clearSearch = () => { setSearchResults(null); setSearchQ(""); setSearchStart(""); setSearchEnd(""); };
 
   const renderReports = () => {
-    const myBills = bills.filter((b) => b.billedById === session.id);
-    const list = isManager ? (searchResults !== null ? searchResults : bills.slice(0, 100)) : myBills.slice(0, 100);
+    const myToday = (todayStats.byStaff.find((s) => s.name === session.name) || {}).count || 0;
+    const list = (isManager && searchResults !== null) ? searchResults : bills.slice(0, 100);
     const billRow = (b) => (
       <div key={b.id} className="flex items-center px-3 py-2.5 hover:bg-gray-50">
         <button onClick={() => setReceiptBill(b)} className="flex items-center flex-1 min-w-0 text-left">
@@ -1486,12 +1527,19 @@ export default function App() {
           </>
         )}
 
+        {!isManager && (
+          <div className="bg-white rounded-2xl border border-gray-200 p-4 mb-5">
+            <p className="text-xs text-gray-500">Bills you made today</p>
+            <p className="text-2xl font-extrabold text-gray-900 mt-1">{myToday}</p>
+          </div>
+        )}
+
         <p className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1.5">
-          {!isManager ? "Your recent bills" : (searchResults !== null ? `Search results (${searchResults.length})` : "Recent bills (latest 100)")}
+          {(isManager && searchResults !== null) ? `Search results (${searchResults.length})` : "Recent bills (latest 100)"}
         </p>
         <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-50">
           {list.length === 0 ? (
-            <p className="text-sm text-gray-400 px-3 py-4">{!isManager ? "You haven't made any bills yet." : (searchResults !== null ? "No bills match your search." : "No bills made yet.")}</p>
+            <p className="text-sm text-gray-400 px-3 py-4">{(isManager && searchResults !== null) ? "No bills match your search." : "No bills made yet."}</p>
           ) : (
             list.map(billRow)
           )}
@@ -1758,7 +1806,7 @@ export default function App() {
               className="w-9 h-9 rounded-full hover:bg-white/10 flex items-center justify-center text-indigo-100">
               {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
-            <button onClick={doLogout} className="flex items-center gap-1.5 text-sm text-indigo-200 hover:text-white">
+            <button onClick={confirmLogout} className="flex items-center gap-1.5 text-sm text-indigo-200 hover:text-white">
               <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Logout</span>
             </button>
           </div>
