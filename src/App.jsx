@@ -53,6 +53,8 @@ function downloadBillPdf(jsPDF, bill, shop) {
   };
   row("Subtotal", pdfInr(bill.subtotal));
   if (bill.discountAmount > 0) row("Discount", "- " + pdfInr(bill.discountAmount));
+  if (Number(bill.additionalCharges) > 0) row("Additional charges", "+ " + pdfInr(bill.additionalCharges));
+  if (Number(bill.roundOff) !== 0) row("Round off", (Number(bill.roundOff) > 0 ? "+ " : "- ") + pdfInr(Math.abs(Number(bill.roundOff))));
   row("TOTAL", pdfInr(bill.total), true);
   y += 10; doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(120);
   if (bill.billedBy) { doc.text("Billed by: " + bill.billedBy, left, y); y += 13; }
@@ -172,6 +174,9 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 /* ------------------------------------------------------------------ */
 const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
 
+// Display label for roles. Internally the top role stays "owner"; shown as "Super Admin".
+const roleLabel = (r) => (r === "owner" ? "Super Admin" : r === "admin" ? "Admin" : "User");
+
 // Mirror of the database password rule, for instant feedback.
 function pwError(p) {
   if (!p || p.length < 8) return "Use at least 8 characters";
@@ -218,6 +223,8 @@ function receiptText(bill, config) {
   t += `------------------------------\n${lines}\n------------------------------\n`;
   t += `Subtotal: ${inr(bill.subtotal)}\n`;
   if (bill.discountAmount > 0) t += `Discount: -${inr(bill.discountAmount)}\n`;
+  if (Number(bill.additionalCharges) > 0) t += `Additional charges: +${inr(bill.additionalCharges)}\n`;
+  if (Number(bill.roundOff) !== 0) t += `Round off: ${Number(bill.roundOff) > 0 ? "+" : "-"}${inr(Math.abs(Number(bill.roundOff)))}\n`;
   t += `*TOTAL: ${inr(bill.total)}*\n`;
   t += `------------------------------\nBilled by: ${bill.billedBy}\nThank you! Have a safe & happy celebration 🎆`;
   const origin = (typeof window !== "undefined" && window.location && window.location.origin) ? window.location.origin : "";
@@ -294,6 +301,8 @@ export function PublicBill() {
         <div className="border-t border-dashed border-gray-300 my-2" />
         <div className="flex justify-between text-xs"><span>Subtotal</span><span>{inr(bill.subtotal)}</span></div>
         {bill.discountAmount > 0 && <div className="flex justify-between text-xs"><span>Discount</span><span>- {inr(bill.discountAmount)}</span></div>}
+        {Number(bill.additionalCharges) > 0 && <div className="flex justify-between text-xs"><span>Additional charges</span><span>+ {inr(bill.additionalCharges)}</span></div>}
+        {Number(bill.roundOff) !== 0 && <div className="flex justify-between text-xs"><span>Round off</span><span>{Number(bill.roundOff) > 0 ? "+ " : "- "}{inr(Math.abs(Number(bill.roundOff)))}</span></div>}
         <div className="flex justify-between font-bold mt-1"><span>Total</span><span>{inr(bill.total)}</span></div>
       </div>
 
@@ -368,6 +377,8 @@ export default function App() {
   const [custMobile, setCustMobile] = useState("");
   const [discType, setDiscType] = useState("percent"); // percent | amount
   const [discVal, setDiscVal] = useState("");
+  const [addCharge, setAddCharge] = useState("");   // extra charges added to the bill
+  const [roundOff, setRoundOff] = useState("");     // round-off adjustment (+/-)
 
   // modals
   const [receiptBill, setReceiptBill] = useState(null);
@@ -647,7 +658,9 @@ export default function App() {
     const amt = discType === "percent" ? (subtotal * v) / 100 : v;
     return Math.min(Math.max(amt, 0), subtotal);
   }, [discVal, discType, subtotal]);
-  const total = Math.max(subtotal - discountAmount, 0);
+  const total = Math.max(subtotal - discountAmount + (Math.max(Number(addCharge) || 0, 0)) + (Number(roundOff) || 0), 0);
+  const addChargeAmt = Math.max(Number(addCharge) || 0, 0);
+  const roundOffAmt = Number(roundOff) || 0;
 
   /* ---- cart actions ---- */
   const addToCart = (item) => {
@@ -678,7 +691,7 @@ export default function App() {
     setCart((prev) => prev.map((l) => (l.id === id ? { ...l, qty: n } : l)).filter((l) => l.qty > 0));
   };
   const clearBill = () => {
-    setCart([]); setCustName(""); setCustMobile(""); setDiscVal("");
+    setCart([]); setCustName(""); setCustMobile(""); setDiscVal(""); setAddCharge(""); setRoundOff("");
   };
 
   // Build the bill payload from the current cart (used for preview + saving).
@@ -688,6 +701,8 @@ export default function App() {
     discountType: discType,
     discountValue: Number(discVal) || 0,
     discountAmount,
+    additionalCharges: addChargeAmt,
+    roundOff: roundOffAmt,
     total,
     customerName: custName.trim(),
     customerMobile: custMobile.trim(),
@@ -1024,11 +1039,11 @@ export default function App() {
                     {inCart.qty}
                   </span>
                 )}
-                <p className="text-xs text-amber-600 font-medium">{it.category}</p>
-                <p className="text-sm font-semibold text-gray-900 leading-snug mt-0.5 pr-5">{it.name}</p>
-                {it.desc ? <p className="text-xs text-gray-400 mt-0.5 truncate">{it.desc}</p> : null}
-                <div className="flex items-end justify-between mt-1">
-                  <p className="text-base font-bold text-gray-900">{inr(it.price)}<span className="text-xs font-normal text-gray-400"> /{it.unit || "unit"}</span></p>
+                <p className="text-[15px] font-extrabold text-gray-900 leading-tight pr-5">{it.name}</p>
+                <p className="text-xs font-semibold text-amber-600 mt-0.5">{it.category}</p>
+                {it.desc ? <p className="text-[11px] text-gray-400 mt-0.5 truncate">{it.desc}</p> : null}
+                <div className="flex items-end justify-between mt-1.5">
+                  <p className="text-xs font-normal text-gray-500">{inr(it.price)}<span className="text-gray-400"> /{it.unit || "unit"}</span></p>
                   <span className={`text-xs font-semibold ${out ? "text-red-500" : left <= 5 ? "text-amber-600" : "text-gray-400"}`}>
                     {out ? "Out" : `${left} left`}
                   </span>
@@ -1122,6 +1137,30 @@ export default function App() {
               />
             </div>
 
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500 flex-1">Additional charges</span>
+              <span className="text-gray-400 text-sm">₹</span>
+              <input
+                value={addCharge}
+                onChange={(e) => setAddCharge(e.target.value)}
+                placeholder="0"
+                inputMode="decimal"
+                className="w-24 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-right focus:outline-none focus:border-orange-400"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500 flex-1">Round off</span>
+              <span className="text-gray-400 text-sm">₹</span>
+              <input
+                value={roundOff}
+                onChange={(e) => setRoundOff(e.target.value)}
+                placeholder="0"
+                inputMode="text"
+                className="w-24 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-right focus:outline-none focus:border-orange-400"
+              />
+            </div>
+
             <div className="text-sm space-y-1 pt-1">
               <div className="flex justify-between text-gray-600">
                 <span>Subtotal</span><span>{inr(subtotal)}</span>
@@ -1129,6 +1168,16 @@ export default function App() {
               {discountAmount > 0 && (
                 <div className="flex justify-between text-red-500">
                   <span>Discount</span><span>-{inr(discountAmount)}</span>
+                </div>
+              )}
+              {addChargeAmt > 0 && (
+                <div className="flex justify-between text-gray-600">
+                  <span>Additional charges</span><span>+{inr(addChargeAmt)}</span>
+                </div>
+              )}
+              {roundOffAmt !== 0 && (
+                <div className="flex justify-between text-gray-600">
+                  <span>Round off</span><span>{roundOffAmt > 0 ? "+" : "-"}{inr(Math.abs(roundOffAmt))}</span>
                 </div>
               )}
               <div className="flex justify-between text-lg font-bold text-gray-900 pt-1">
@@ -1168,16 +1217,18 @@ export default function App() {
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <div className="bg-white rounded-2xl border border-gray-200 p-3">
-          <p className="text-xs text-gray-500">Total units in stock</p>
-          <p className="text-xl font-extrabold text-gray-900 mt-0.5">{totalUnits}</p>
+      {isManager && (
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="bg-white rounded-2xl border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Total units in stock</p>
+            <p className="text-xl font-extrabold text-gray-900 mt-0.5">{totalUnits}</p>
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Stock value</p>
+            <p className="text-xl font-extrabold text-gray-900 mt-0.5">{inr(totalValue)}</p>
+          </div>
         </div>
-        <div className="bg-white rounded-2xl border border-gray-200 p-3">
-          <p className="text-xs text-gray-500">Stock value</p>
-          <p className="text-xl font-extrabold text-gray-900 mt-0.5">{inr(totalValue)}</p>
-        </div>
-      </div>
+      )}
 
       {categories.length === 0 && items.length === 0 && (
         <p className="text-gray-400 text-center py-10">No items yet — add your first one.</p>
@@ -1244,7 +1295,8 @@ export default function App() {
   const clearSearch = () => { setSearchResults(null); setSearchQ(""); setSearchStart(""); setSearchEnd(""); };
 
   const renderReports = () => {
-    const list = searchResults !== null ? searchResults : bills.slice(0, 100);
+    const myBills = bills.filter((b) => b.billedById === session.id);
+    const list = isManager ? (searchResults !== null ? searchResults : bills.slice(0, 100)) : myBills.slice(0, 100);
     const billRow = (b) => (
       <div key={b.id} className="flex items-center px-3 py-2.5 hover:bg-gray-50">
         <button onClick={() => setReceiptBill(b)} className="flex items-center flex-1 min-w-0 text-left">
@@ -1268,79 +1320,83 @@ export default function App() {
 
     return (
       <div className="max-w-3xl mx-auto px-3 pb-32 pt-4">
-        <h2 className="text-lg font-bold text-gray-900 mb-3">Today's sales</h2>
+        {isManager && (
+          <>
+            <h2 className="text-lg font-bold text-gray-900 mb-3">Today's sales</h2>
 
-        <div className="grid grid-cols-2 gap-3 mb-5">
-          <div className="bg-white rounded-2xl border border-gray-200 p-4">
-            <p className="text-xs text-gray-500">Total collected</p>
-            <p className="text-2xl font-extrabold text-emerald-600 mt-1">{inr(todayStats.total)}</p>
-          </div>
-          <div className="bg-white rounded-2xl border border-gray-200 p-4">
-            <p className="text-xs text-gray-500">Bills made</p>
-            <p className="text-2xl font-extrabold text-gray-900 mt-1">{todayStats.count}</p>
-          </div>
-        </div>
-
-        <p className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1.5">Who billed what (today)</p>
-        <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-50 mb-5">
-          {todayStats.byStaff.length === 0 ? (
-            <p className="text-sm text-gray-400 px-3 py-4">No bills yet today.</p>
-          ) : (
-            todayStats.byStaff.map((s) => (
-              <div key={s.name} className="flex items-center px-3 py-2.5">
-                <span className="text-sm font-medium text-gray-900">{s.name}</span>
-                <span className="ml-auto text-sm text-gray-500 mr-4">{s.count} bills</span>
-                <span className="text-sm font-bold text-gray-900">{inr(s.total)}</span>
+            <div className="grid grid-cols-2 gap-3 mb-5">
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <p className="text-xs text-gray-500">Total collected</p>
+                <p className="text-2xl font-extrabold text-emerald-600 mt-1">{inr(todayStats.total)}</p>
               </div>
-            ))
-          )}
-        </div>
-
-        {/* search */}
-        <p className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1.5">Find a bill</p>
-        <div className="bg-white rounded-2xl border border-gray-200 p-3 mb-5 space-y-2">
-          <select value={searchField} onChange={(e) => { setSearchField(e.target.value); }}
-            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:border-orange-400">
-            <option value="billno">Bill number</option>
-            <option value="name">Customer name</option>
-            <option value="mobile">Customer number</option>
-            <option value="date">Date range</option>
-          </select>
-          {searchField === "date" ? (
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[11px] text-gray-500">From</label>
-                <input type="date" value={searchStart} onChange={(e) => setSearchStart(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
-              </div>
-              <div>
-                <label className="text-[11px] text-gray-500">To</label>
-                <input type="date" value={searchEnd} onChange={(e) => setSearchEnd(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <p className="text-xs text-gray-500">Bills made</p>
+                <p className="text-2xl font-extrabold text-gray-900 mt-1">{todayStats.count}</p>
               </div>
             </div>
-          ) : (
-            <input value={searchQ} onChange={(e) => setSearchQ(e.target.value)}
-              placeholder={searchField === "billno" ? "e.g. HRC-0007 or 7" : searchField === "name" ? "Customer name" : "Customer mobile number"}
-              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
-          )}
-          <div className="flex gap-2">
-            <button onClick={runSearch} disabled={searching}
-              className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2">
-              <Search className="w-4 h-4" /> {searching ? "Searching…" : "Search"}
-            </button>
-            {searchResults !== null && (
-              <button onClick={clearSearch} className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold">Clear</button>
-            )}
-          </div>
-        </div>
+
+            <p className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1.5">Who billed what (today)</p>
+            <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-50 mb-5">
+              {todayStats.byStaff.length === 0 ? (
+                <p className="text-sm text-gray-400 px-3 py-4">No bills yet today.</p>
+              ) : (
+                todayStats.byStaff.map((s) => (
+                  <div key={s.name} className="flex items-center px-3 py-2.5">
+                    <span className="text-sm font-medium text-gray-900">{s.name}</span>
+                    <span className="ml-auto text-sm text-gray-500 mr-4">{s.count} bills</span>
+                    <span className="text-sm font-bold text-gray-900">{inr(s.total)}</span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* search */}
+            <p className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1.5">Find a bill</p>
+            <div className="bg-white rounded-2xl border border-gray-200 p-3 mb-5 space-y-2">
+              <select value={searchField} onChange={(e) => { setSearchField(e.target.value); }}
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:border-orange-400">
+                <option value="billno">Bill number</option>
+                <option value="name">Customer name</option>
+                <option value="mobile">Customer number</option>
+                <option value="date">Date range</option>
+              </select>
+              {searchField === "date" ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] text-gray-500">From</label>
+                    <input type="date" value={searchStart} onChange={(e) => setSearchStart(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-gray-500">To</label>
+                    <input type="date" value={searchEnd} onChange={(e) => setSearchEnd(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
+                  </div>
+                </div>
+              ) : (
+                <input value={searchQ} onChange={(e) => setSearchQ(e.target.value)}
+                  placeholder={searchField === "billno" ? "e.g. HRC-0007 or 7" : searchField === "name" ? "Customer name" : "Customer mobile number"}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
+              )}
+              <div className="flex gap-2">
+                <button onClick={runSearch} disabled={searching}
+                  className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2">
+                  <Search className="w-4 h-4" /> {searching ? "Searching…" : "Search"}
+                </button>
+                {searchResults !== null && (
+                  <button onClick={clearSearch} className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold">Clear</button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
 
         <p className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1.5">
-          {searchResults !== null ? `Search results (${searchResults.length})` : "Recent bills (latest 100)"}
+          {!isManager ? "Your recent bills" : (searchResults !== null ? `Search results (${searchResults.length})` : "Recent bills (latest 100)")}
         </p>
         <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-50">
           {list.length === 0 ? (
-            <p className="text-sm text-gray-400 px-3 py-4">{searchResults !== null ? "No bills match your search." : "No bills made yet."}</p>
+            <p className="text-sm text-gray-400 px-3 py-4">{!isManager ? "You haven't made any bills yet." : (searchResults !== null ? "No bills match your search." : "No bills made yet.")}</p>
           ) : (
             list.map(billRow)
           )}
@@ -1373,7 +1429,7 @@ export default function App() {
                   <span className="ml-auto text-xs text-gray-400 whitespace-nowrap">{fmtDateTime(l.at)}</span>
                 </div>
                 {l.detail && <p className="text-sm text-gray-600 mt-0.5">{l.detail}</p>}
-                <p className="text-xs text-gray-400 mt-0.5">by {l.by} ({l.role})</p>
+                <p className="text-xs text-gray-400 mt-0.5">by {l.by} ({roleLabel(l.role)})</p>
               </div>
             ))
           )}
@@ -1456,7 +1512,7 @@ export default function App() {
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-gray-900 truncate">{session.name}</p>
-            <p className="text-xs text-gray-500 capitalize">{session.role}</p>
+            <p className="text-xs text-gray-500">{roleLabel(session.role)}</p>
           </div>
           <button onClick={() => { setCpwOld(""); setCpw1(""); setCpw2(""); setCpwErr(""); setShowCpw(false); setCpwOpen(true); }}
             className="ml-auto px-3 py-2 rounded-xl bg-orange-500 text-white text-sm font-semibold whitespace-nowrap">
@@ -1525,7 +1581,7 @@ export default function App() {
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-gray-900">{u.name}{u.id === session.id ? " (you)" : ""}</p>
-                  <p className="text-xs text-gray-500 capitalize">{u.role}{u.blocked ? " · blocked" : ""}</p>
+                  <p className="text-xs text-gray-500">{roleLabel(u.role)}{u.blocked ? " · blocked" : ""}</p>
                 </div>
                 {(u.id === session.id || canManageTarget(u)) && (
                   <button onClick={() => setEditingUser({ ...u, password: "" })} className="ml-auto p-2 text-gray-400 hover:text-indigo-900">
@@ -1536,12 +1592,12 @@ export default function App() {
             ))}
           </div>
           <p className="text-xs text-gray-400 mt-2">
-            {isOwner ? "Tap a user to reset password, set their role, block, or remove them." : "Tap a user to reset password, block, or remove them. Only the owner can assign roles."}
+            {isOwner ? "Tap a user to reset password, set their role, block, or remove them." : "Tap a user to reset password, block, or remove them. Only the Super Admin can assign roles."}
           </p>
         </div>
       )}
 
-      {isManager && (
+      {isOwner && (
         <div>
           <h2 className="text-lg font-bold text-gray-900 mb-3">Danger zone</h2>
           <button
@@ -1565,7 +1621,7 @@ export default function App() {
     { id: "billing", label: "Bill", icon: ShoppingCart },
     { id: "items", label: "Items", icon: Package },
     { id: "reports", label: "Reports", icon: BarChart3 },
-    { id: "feedback", label: "Feedback", icon: Star },
+    ...(isManager ? [{ id: "feedback", label: "Feedback", icon: Star }] : []),
     ...(isOwner ? [{ id: "logs", label: "Logs", icon: ScrollText }] : []),
     { id: "settings", label: "Settings", icon: SettingsIcon },
   ];
@@ -1611,7 +1667,7 @@ export default function App() {
       {screen === "billing" && renderBilling()}
       {screen === "items" && renderItems()}
       {screen === "reports" && renderReports()}
-      {screen === "feedback" && renderFeedback()}
+      {screen === "feedback" && isManager && renderFeedback()}
       {screen === "logs" && isOwner && renderLogs()}
       {screen === "settings" && renderSettings()}
 
@@ -1686,6 +1742,12 @@ export default function App() {
               <div className="flex justify-between"><span>Subtotal</span><span>{inr(receiptBill.subtotal)}</span></div>
               {receiptBill.discountAmount > 0 && (
                 <div className="flex justify-between"><span>Discount</span><span>-{inr(receiptBill.discountAmount)}</span></div>
+              )}
+              {Number(receiptBill.additionalCharges) > 0 && (
+                <div className="flex justify-between"><span>Additional charges</span><span>+{inr(receiptBill.additionalCharges)}</span></div>
+              )}
+              {Number(receiptBill.roundOff) !== 0 && (
+                <div className="flex justify-between"><span>Round off</span><span>{Number(receiptBill.roundOff) > 0 ? "+" : "-"}{inr(Math.abs(Number(receiptBill.roundOff)))}</span></div>
               )}
               <div className="flex justify-between text-base font-bold mt-1">
                 <span>TOTAL</span><span>{inr(receiptBill.total)}</span>
@@ -1870,8 +1932,8 @@ export default function App() {
                   <label className="text-xs font-semibold text-gray-500">Role</label>
                   <select value={editingUser.role} onChange={(e) => setEditingUser({ ...editingUser, role: e.target.value })}
                     className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm">
-                    <option value="user">user</option>
-                    <option value="admin">admin</option>
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
                   </select>
                 </div>
               )}
