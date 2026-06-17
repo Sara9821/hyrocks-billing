@@ -1719,7 +1719,13 @@ export default function App() {
           <ChevronRight className="w-4 h-4 text-gray-300" />
         </button>
         {isManager && !b.cancelled && (
-          <button onClick={() => startEditBill(b)} className="ml-1 p-2 text-gray-300 hover:text-indigo-600" title="Edit bill">
+          <button onClick={() => setConfirmState({
+            message: `Edit bill ${b.billNo} (${inr(b.total)})? It will open in the Bill tab so you can change its items and amounts. Saving will update this bill (no new bill is created).`,
+            confirmLabel: "Yes, edit",
+            cancelLabel: "Cancel",
+            danger: false,
+            onYes: () => startEditBill(b),
+          })} className="ml-1 p-2 text-gray-300 hover:text-indigo-600" title="Edit bill">
             <Pencil className="w-4 h-4" />
           </button>
         )}
