@@ -220,18 +220,18 @@ function Intro({ onDone }) {
 function PrintReceipt({ bill, config }) {
   if (!bill) return null;
   const mono = "'Courier New', ui-monospace, Menlo, Consolas, monospace";
-  const Dash = () => <div style={{ borderTop: "1px dashed #000", margin: "1.5mm 0" }} />;
+  const Dash = () => <div style={{ borderTop: "1.5px dashed #000", margin: "1.5mm 0" }} />;
   const Row = ({ l, r, bold, big }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: "3mm", fontWeight: bold ? 700 : 400, fontSize: big ? "13pt" : undefined, marginTop: big ? "1mm" : undefined }}>
+    <div style={{ display: "flex", justifyContent: "space-between", gap: "3mm", fontWeight: bold ? 800 : 700, fontSize: big ? "13pt" : undefined, marginTop: big ? "1mm" : undefined }}>
       <span style={{ wordBreak: "break-word" }}>{l}</span>
       <span style={{ whiteSpace: "nowrap" }}>{r}</span>
     </div>
   );
   return createPortal(
-    <div id="print-area" style={{ fontFamily: mono, color: "#000" }}>
+    <div id="print-area" style={{ fontFamily: mono, color: "#000", fontWeight: 700, WebkitTextStroke: "0.3px #000", WebkitPrintColorAdjust: "exact", printColorAdjust: "exact" }}>
       <div style={{ width: "72mm", padding: "2mm 3mm", fontSize: "11pt", lineHeight: 1.35 }}>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "15pt", fontWeight: 700, letterSpacing: "0.3px" }}>{config.shopName}</div>
+          <div style={{ fontSize: "15pt", fontWeight: 800, letterSpacing: "0.3px" }}>{config.shopName}</div>
           {config.address && <div style={{ fontSize: "8.5pt", lineHeight: 1.25 }}>{config.address}</div>}
           {config.phone && <div style={{ fontSize: "8.5pt" }}>Ph: {config.phone}</div>}
         </div>

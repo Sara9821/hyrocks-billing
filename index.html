@@ -52,6 +52,13 @@
         html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
         #root { display: none !important; }
         #print-area { display: block !important; }
+        /* keep thermal output dark: print pure black, no auto-lightening */
+        #print-area, #print-area * {
+          color: #000 !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+          -webkit-font-smoothing: none !important;
+        }
       }
 
       @keyframes hrcPopIn {
