@@ -4,7 +4,7 @@ import {
   ShoppingCart, Plus, Minus, Trash2, Printer, MessageCircle, Receipt,
   Package, BarChart3, Settings as SettingsIcon, LogOut, Search, X, Check,
   Pencil, Users, Sparkles, Tag, Phone, User, ChevronRight, Copy,
-  Sun, Moon, Eye, EyeOff, ScrollText, KeyRound, Star
+  Sun, Moon, Eye, EyeOff, ScrollText, KeyRound, Star, Ban
 } from "lucide-react";
 import { rpc } from "./supabase.js";
 
@@ -236,6 +236,9 @@ function PrintReceipt({ bill, config }) {
           {config.phone && <div style={{ fontSize: "8.5pt" }}>Ph: {config.phone}</div>}
         </div>
         <Dash />
+        {bill.cancelled && (
+          <div style={{ textAlign: "center", fontWeight: 700, fontSize: "12pt", margin: "1mm 0" }}>** CANCELLED **</div>
+        )}
         <Row l={bill.billNo || "(new bill)"} r={fmtDateTime(bill.createdAt)} />
         {(bill.customerName || bill.customerMobile) && (
           <div style={{ fontSize: "9pt" }}>Customer: {[bill.customerName, bill.customerMobile].filter(Boolean).join(" | ")}</div>
@@ -471,6 +474,11 @@ export function PublicBill() {
   const { bill, shop } = data;
   return (
     <BillShell shopName={shop?.shopName}>
+      {bill.cancelled && (
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-2.5 mb-3 text-sm font-semibold text-center">
+          This bill has been cancelled.
+        </div>
+      )}
       {/* bill */}
       <div className="bg-white rounded-2xl border border-gray-200 p-5 font-mono text-[13px] text-gray-900">
         <div className="flex justify-between text-xs text-gray-500">
@@ -562,6 +570,7 @@ export default function App() {
 
   // billing
   const [cart, setCart] = useState([]);
+  const [editingBill, setEditingBill] = useState(null); // when set, saving updates this bill instead of creating one
   const [search, setSearch] = useState("");
   const [cat, setCat] = useState("All");
   const [custName, setCustName] = useState("");
@@ -934,9 +943,17 @@ export default function App() {
   const total = Math.max(subtotal - discountAmount + addChargeAmt + roundOffAmt, 0);
 
   /* ---- cart actions ---- */
+  // While editing a bill, that bill's own quantities are "available" again
+  // (they get returned then re-deducted on save), so add them back here.
+  const availStock = (item) => {
+    if (!item) return 0;
+    const bonus = editingBill ? ((editingBill.lines || []).find((l) => l.id === item.id)?.qty || 0) : 0;
+    return (item.stock || 0) + bonus;
+  };
   const addToCart = (item) => {
     const have = cart.find((l) => l.id === item.id)?.qty || 0;
-    if (have + 1 > (item.stock || 0)) { flash(`Only ${item.stock || 0} ${item.unit || ""} in stock`); return; }
+    const cap = availStock(item);
+    if (have + 1 > cap) { flash(`Only ${cap} ${item.unit || ""} in stock`); return; }
     setCart((prev) => {
       const ex = prev.find((l) => l.id === item.id);
       if (ex) return prev.map((l) => (l.id === item.id ? { ...l, qty: l.qty + 1 } : l));
@@ -947,7 +964,8 @@ export default function App() {
     if (delta > 0) {
       const item = items.find((i) => i.id === id);
       const cur = cart.find((l) => l.id === id)?.qty || 0;
-      if (cur + delta > (item?.stock || 0)) { flash(`Only ${item?.stock || 0} ${item?.unit || ""} in stock`); return; }
+      const cap = availStock(item);
+      if (cur + delta > cap) { flash(`Only ${cap} ${item?.unit || ""} in stock`); return; }
     }
     setCart((prev) =>
       prev
@@ -958,13 +976,37 @@ export default function App() {
   const setQty = (id, q) => {
     let n = Math.max(0, Math.floor(Number(q) || 0));
     const item = items.find((i) => i.id === id);
-    if (n > (item?.stock || 0)) { n = item?.stock || 0; flash(`Only ${item?.stock || 0} ${item?.unit || ""} in stock`); }
+    const cap = availStock(item);
+    if (n > cap) { n = cap; flash(`Only ${cap} ${item?.unit || ""} in stock`); }
     setCart((prev) => prev.map((l) => (l.id === id ? { ...l, qty: n } : l)).filter((l) => l.qty > 0));
   };
   const clearBill = () => {
     setCart([]); setCustName(""); setCustMobile(""); setDiscVal(""); setAddCharge(""); setRoundOff("");
-    setAddChargeNote(""); setRoundSign("minus");
+    setAddChargeNote(""); setRoundSign("minus"); setEditingBill(null);
     setCustInfo(null); setShowCustHist(false);
+  };
+
+  // Load an existing bill into the cart for editing (Admin / Super Admin).
+  const startEditBill = (b) => {
+    if (!b || b.cancelled) return;
+    setReceiptBill(null);
+    setCart((b.lines || []).map((l) => ({
+      id: l.id, name: l.name, price: l.price,
+      unit: items.find((i) => i.id === l.id)?.unit || "", qty: l.qty,
+    })));
+    setCustName(b.customerName || ""); setCustMobile(b.customerMobile || "");
+    setDiscType(b.discountType || "percent");
+    setDiscVal(b.discountValue ? String(b.discountValue) : "");
+    setAddCharge(Number(b.additionalCharges) > 0 ? String(b.additionalCharges) : "");
+    setAddChargeNote(b.additionalChargesNote || "");
+    const ro = Number(b.roundOff) || 0;
+    setRoundOff(ro ? String(Math.abs(ro)) : "");
+    setRoundSign(ro < 0 ? "minus" : "plus");
+    setPayMode(b.paymentMode || "");
+    setCustInfo(null); setShowCustHist(false);
+    setEditingBill(b);
+    setScreen("billing");
+    flash(`Editing ${b.billNo}`);
   };
 
   // Build the bill payload from the current cart (used for preview + saving).
@@ -985,13 +1027,14 @@ export default function App() {
   // Step 1: show the receipt as a PREVIEW. Nothing is recorded yet.
   const previewBill = () => {
     if (cart.length === 0) { flash("Add at least one item"); return; }
-    setPayMode("");
+    if (!editingBill) setPayMode("");   // keep the loaded payment when editing
     const p = buildBillPayload();
     setReceiptBill({
       draft: true,
-      billNo: null,
-      createdAt: new Date().toISOString(),
-      billedBy: session.name,
+      editing: !!editingBill,
+      billNo: editingBill ? editingBill.billNo : null,
+      createdAt: editingBill ? editingBill.createdAt : new Date().toISOString(),
+      billedBy: editingBill ? editingBill.billedBy : session.name,
       ...p,
     });
   };
@@ -1004,10 +1047,13 @@ export default function App() {
     if (committing) return null;
     setCommitting(true);
     try {
-      const bill = await rpc("save_bill", { p_actor: session.id, p_token: session.token, p_bill: { ...buildBillPayload(), paymentMode: payMode } });
+      const payload = { ...buildBillPayload(), paymentMode: payMode };
+      const bill = editingBill
+        ? await rpc("edit_bill", { p_actor: session.id, p_token: session.token, p_id: editingBill.id, p_bill: payload })
+        : await rpc("save_bill", { p_actor: session.id, p_token: session.token, p_bill: payload });
       const saved = { ...bill, draft: false };
       setReceiptBill(saved);
-      clearBill();
+      clearBill();                                  // also clears editingBill
       await refresh();
       setCommitting(false);
       return saved;
@@ -1286,9 +1332,17 @@ export default function App() {
   /* ================================================================ */
 
   const renderBilling = () => (
-    <div className="max-w-7xl mx-auto px-3 pb-40 pt-3 md:grid md:grid-cols-5 md:gap-4">
+    <div className="max-w-[1700px] mx-auto px-4 pb-40 pt-3">
+      {editingBill && (
+        <div className="mb-3 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-sm">
+          <Pencil className="w-4 h-4 shrink-0" />
+          <span className="min-w-0">Editing <b>{editingBill.billNo}</b> — saving updates this bill (no new bill is created).</span>
+          <button onClick={clearBill} className="ml-auto shrink-0 text-xs font-semibold text-amber-800 underline">Discard</button>
+        </div>
+      )}
+      <div className="md:flex md:gap-4 lg:gap-5">
       {/* Items */}
-      <div className="md:col-span-3">
+      <div className="md:flex-1 md:min-w-0">
         <div className="sticky top-[57px] z-10 bg-slate-50 pt-2 pb-2">
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-3.5 text-gray-400" />
@@ -1314,11 +1368,12 @@ export default function App() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 mt-2">
+        <div className="grid grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-2 mt-2">
           {visibleItems.map((it) => {
             const inCart = cart.find((l) => l.id === it.id);
-            const left = (it.stock || 0) - (inCart?.qty || 0);
-            const out = (it.stock || 0) <= 0;
+            const cap = availStock(it);
+            const left = cap - (inCart?.qty || 0);
+            const out = cap <= 0;
             return (
               <button
                 key={it.id}
@@ -1349,7 +1404,7 @@ export default function App() {
       </div>
 
       {/* Cart */}
-      <div className="md:col-span-2 mt-4 md:mt-0">
+      <div className="mt-4 md:mt-0 md:w-[340px] lg:w-[380px] xl:w-[400px] md:shrink-0">
         <div className="bg-white rounded-2xl border border-gray-200 md:sticky md:top-[64px]">
           <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
             <ShoppingCart className="w-4 h-4 text-indigo-900" />
@@ -1520,6 +1575,7 @@ export default function App() {
           </div>
         </div>
       </div>
+      </div>
     </div>
   );
 
@@ -1527,7 +1583,7 @@ export default function App() {
     const totalUnits = items.reduce((s, i) => s + (i.stock || 0), 0);
     const totalValue = items.reduce((s, i) => s + (i.stock || 0) * i.price, 0);
     return (
-    <div className="max-w-6xl mx-auto px-3 pb-32 pt-4">
+    <div className="max-w-[1400px] mx-auto px-4 pb-32 pt-4">
       <div className="flex items-center gap-2 mb-3">
         <h2 className="text-lg font-bold text-gray-900">Items & stock</h2>
         {isManager ? (
@@ -1559,7 +1615,7 @@ export default function App() {
         <p className="text-gray-400 text-center py-10">No items yet — add your first one.</p>
       )}
 
-      <div className="md:columns-2 xl:columns-3 md:gap-4">
+      <div className="md:columns-2 xl:columns-3 2xl:columns-4 md:gap-4">
       {categories.map((c) => {
         const catItems = items.filter((i) => i.category === c);
         const catUnits = catItems.reduce((s, i) => s + (i.stock || 0), 0);
@@ -1650,20 +1706,39 @@ export default function App() {
     const myToday = (todayStats.byStaff.find((s) => s.name === session.name) || {}).count || 0;
     const list = (isManager && searchResults !== null) ? searchResults : bills.slice(0, 100);
     const billRow = (b) => (
-      <div key={b.id} className="flex items-center px-3 py-2.5 bg-white rounded-xl border border-gray-200 hover:border-orange-400">
+      <div key={b.id} className={`flex items-center px-3 py-2.5 bg-white rounded-xl border ${b.cancelled ? "border-gray-200 opacity-70" : "border-gray-200 hover:border-orange-400"}`}>
         <button onClick={() => setReceiptBill(b)} className="flex items-center flex-1 min-w-0 text-left">
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-gray-900">{b.billNo}</p>
+            <p className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+              {b.billNo}
+              {b.cancelled && <span className="text-[10px] font-bold text-red-600 bg-red-50 border border-red-200 rounded px-1 py-0.5">CANCELLED</span>}
+            </p>
             <p className="text-xs text-gray-500 truncate">{fmtDateTime(b.createdAt)} • {b.billedBy}{b.customerName ? ` • ${b.customerName}` : ""}</p>
           </div>
-          <span className="ml-auto text-sm font-bold text-gray-900 mr-1">{inr(b.total)}</span>
+          <span className={`ml-auto text-sm font-bold mr-1 ${b.cancelled ? "text-gray-400 line-through" : "text-gray-900"}`}>{inr(b.total)}</span>
           <ChevronRight className="w-4 h-4 text-gray-300" />
         </button>
+        {isManager && !b.cancelled && (
+          <button onClick={() => startEditBill(b)} className="ml-1 p-2 text-gray-300 hover:text-indigo-600" title="Edit bill">
+            <Pencil className="w-4 h-4" />
+          </button>
+        )}
+        {isManager && !b.cancelled && (
+          <button onClick={() => setConfirmState({
+            message: `Cancel bill ${b.billNo} (${inr(b.total)})? It will be marked CANCELLED and its items go back into stock. It stays in the records but won't count in sales.`,
+            confirmLabel: "Yes, cancel bill",
+            cancelLabel: "No, keep it",
+            danger: false,
+            onYes: async () => { try { await rpc("cancel_bill", { p_actor: session.id, p_token: session.token, p_id: b.id }); await refresh(); if (searchResults !== null) await runSearch(); flash("Bill cancelled"); } catch (e) { handleErr(e); } },
+          })} className="ml-0.5 p-2 text-gray-300 hover:text-amber-600" title="Cancel bill">
+            <Ban className="w-4 h-4" />
+          </button>
+        )}
         {isOwner && (
           <button onClick={() => setConfirmState({
-            message: `Delete bill ${b.billNo} (${inr(b.total)})? Its items go back into stock. This can't be undone.`,
+            message: `Delete bill ${b.billNo} (${inr(b.total)})? It will be removed completely.${b.cancelled ? "" : " Its items go back into stock."} This can't be undone.`,
             onYes: async () => { try { await rpc("delete_bill", { p_actor: session.id, p_token: session.token, p_id: b.id }); await refresh(); if (searchResults !== null) await runSearch(); flash("Bill deleted"); } catch (e) { handleErr(e); } },
-          })} className="ml-2 p-2 text-gray-300 hover:text-red-500" title="Delete bill">
+          })} className="ml-0.5 p-2 text-gray-300 hover:text-red-500" title="Delete bill">
             <Trash2 className="w-4 h-4" />
           </button>
         )}
@@ -1671,7 +1746,7 @@ export default function App() {
     );
 
     return (
-      <div className="max-w-6xl mx-auto px-3 pb-32 pt-4">
+      <div className="max-w-[1400px] mx-auto px-4 pb-32 pt-4">
         <div className="lg:max-w-2xl">
         {isManager && (
           <>
@@ -1797,7 +1872,7 @@ export default function App() {
         {list.length === 0 ? (
           <p className="text-sm text-gray-400 px-3 py-4 bg-white rounded-xl border border-gray-200">{(isManager && searchResults !== null) ? "No bills match your search." : "No bills made yet."}</p>
         ) : (
-          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2">
+          <div className="grid sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2">
             {list.map(billRow)}
           </div>
         )}
@@ -1854,7 +1929,7 @@ export default function App() {
     const unread = feedback.filter((f) => !f.read).length;
     const avg = feedback.length ? feedback.reduce((s, f) => s + f.rating, 0) / feedback.length : 0;
     return (
-      <div className="max-w-6xl mx-auto px-3 pb-32 pt-4 space-y-4">
+      <div className="max-w-[1400px] mx-auto px-4 pb-32 pt-4 space-y-4">
         <div className="flex items-center">
           <div>
             <h2 className="text-lg font-bold text-gray-900">Customer feedback</h2>
@@ -1877,7 +1952,7 @@ export default function App() {
             No feedback yet. It shows up here when customers rate you using the link on their WhatsApp bill.
           </div>
         ) : (
-          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2 items-start">
+          <div className="grid sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2 items-start">
             {feedback.map((f) => (
               <button key={f.id} onClick={() => markFeedbackRead(f)}
                 className={`w-full text-left rounded-2xl border p-3 transition ${f.read ? "bg-white border-gray-200" : "bg-amber-50 border-amber-200"}`}>
@@ -2054,7 +2129,7 @@ export default function App() {
 
       {/* top bar */}
       <header className="sticky top-0 z-20 bg-indigo-950 text-white">
-        <div className="max-w-7xl mx-auto px-4 h-[57px] flex items-center">
+        <div className="max-w-[1700px] mx-auto px-4 h-[57px] flex items-center">
           <img src={LOGO_DATA_URI} alt="" className="w-7 h-7 rounded-md object-cover mr-2" />
           <span className="font-bold tracking-tight">{config.shopName}</span>
           <div className="ml-auto flex items-center gap-2">
@@ -2073,7 +2148,7 @@ export default function App() {
       {/* Install-app banner (appears when the phone/browser is ready to install) */}
       {installEvt && (
         <div className="no-print bg-indigo-50 border-b border-indigo-100 px-4 py-2.5">
-          <div className="max-w-7xl mx-auto flex items-center gap-3">
+          <div className="max-w-[1700px] mx-auto flex items-center gap-3">
             <img src={LOGO_DATA_URI} alt="" className="w-8 h-8 rounded-lg object-cover" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-indigo-950 leading-tight">Install the Hyrocks app</p>
@@ -2095,7 +2170,7 @@ export default function App() {
 
       {/* bottom nav */}
       <nav className="fixed bottom-0 inset-x-0 z-20 bg-white border-t border-gray-200">
-        <div className="max-w-7xl mx-auto grid" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
+        <div className="max-w-[1700px] mx-auto grid" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
           {tabs.map((t) => {
             const Icon = t.icon;
             const active = screen === t.id;
@@ -2123,13 +2198,21 @@ export default function App() {
         <div className="fixed inset-0 z-40 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white w-full sm:max-w-sm sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto">
             <div className="no-print flex items-center px-4 py-3 border-b border-gray-100 sticky top-0 bg-white">
-              <span className="font-semibold">{receiptBill.draft ? "New bill — preview" : `Bill ${receiptBill.billNo}`}</span>
+              <span className="font-semibold">{receiptBill.draft ? (receiptBill.editing ? `Edit ${receiptBill.billNo} — preview` : "New bill — preview") : `Bill ${receiptBill.billNo}`}</span>
               <button onClick={() => setReceiptBill(null)} className="ml-auto p-1 text-gray-400"><X className="w-5 h-5" /></button>
             </div>
 
+            {receiptBill.cancelled && (
+              <div className="no-print mx-4 mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-semibold flex items-center gap-1.5">
+                <Ban className="w-4 h-4" /> This bill was cancelled — its items were returned to stock and it doesn't count in sales.
+              </div>
+            )}
+
             {receiptBill.draft && (
               <div className="no-print mx-4 mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
-                Not recorded yet. Tap <b>Print</b>, <b>WhatsApp</b>, or <b>Print + WhatsApp</b> below to save this bill. Closing with ✕ will discard it.
+                {receiptBill.editing
+                  ? <>Changes not saved yet. Tap <b>Print</b>, <b>WhatsApp</b>, or <b>Print + WhatsApp</b> below to update this bill. Closing with ✕ will discard the changes.</>
+                  : <>Not recorded yet. Tap <b>Print</b>, <b>WhatsApp</b>, or <b>Print + WhatsApp</b> below to save this bill. Closing with ✕ will discard it.</>}
               </div>
             )}
 
@@ -2182,6 +2265,10 @@ export default function App() {
 
             {/* actions */}
             <div className="no-print p-4 border-t border-gray-100 space-y-2 sticky bottom-0 bg-white">
+              {receiptBill.cancelled ? (
+                <p className="text-center text-xs text-gray-400 py-1">This bill is cancelled. Printing and WhatsApp are turned off for cancelled bills.</p>
+              ) : (
+              <>
               {receiptBill.draft && (
                 <div>
                   <p className="text-xs font-semibold text-gray-500 mb-1.5">Payment mode <span className="text-red-500">*</span></p>
@@ -2217,6 +2304,8 @@ export default function App() {
                 <span>+</span>
                 <span className="flex items-center gap-1"><MessageCircle className="w-4 h-4" /> WhatsApp</span>
               </button>
+              </>
+              )}
             </div>
           </div>
         </div>
@@ -2507,7 +2596,7 @@ export default function App() {
             <p className="text-sm text-gray-800 mb-4">{confirmState.message}</p>
             <div className="flex gap-2">
               <button onClick={() => setConfirmState(null)}
-                className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold">Cancel</button>
+                className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold">{confirmState.cancelLabel || "Cancel"}</button>
               <button onClick={() => { confirmState.onYes(); setConfirmState(null); }}
                 className={`flex-1 py-2.5 rounded-xl text-white text-sm font-semibold ${confirmState.danger === false ? "bg-indigo-600" : "bg-red-500"}`}>
                 {confirmState.confirmLabel || "Yes, delete"}</button>
