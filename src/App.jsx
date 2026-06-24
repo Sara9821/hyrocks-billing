@@ -1106,11 +1106,17 @@ export default function App() {
     }
   };
 
-  // Open WhatsApp with the bill pre-filled, addressed to the customer.
-  const sendWhatsApp = (bill) => {
-    if (!bill || !bill.customerMobile) { flash("Add the customer's mobile number to send on WhatsApp"); return; }
-    const url = `https://wa.me/${sanitizePhone(bill.customerMobile)}?text=${encodeURIComponent(receiptText(bill, config))}`;
-    window.open(url, "_blank", "noopener");
+  // Send the bill to the customer on WhatsApp via the Cloud API (handled server-side).
+  const sendWhatsApp = async (bill) => {
+    if (!bill || !bill.id) return;
+    const mob = (bill.customerMobile || "").replace(/\D/g, "");
+    if (mob.length < 10) { flash("Add the customer's mobile number to send on WhatsApp"); return; }
+    try {
+      flash("Sending on WhatsApp…");
+      const r = await rpc("send_bill_whatsapp", { p_actor: session.id, p_token: session.token, p_id: bill.id });
+      if (r && r.ok) flash("WhatsApp bill sent ✓");
+      else flash((r && r.error) ? `WhatsApp: ${r.error}` : "Couldn't send on WhatsApp");
+    } catch (e) { handleErr(e); }
   };
 
   /* ---- forgot-password (OTP) ---- */
