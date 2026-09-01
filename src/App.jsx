@@ -1936,6 +1936,25 @@ export default function App() {
     try { await rpc("mark_all_feedback_read", { p_actor: session.id, p_token: session.token }); }
     catch (e) { handleErr(e); }
   };
+  const deleteFeedback = (f) => {
+    setConfirmState({
+      message: `Delete this feedback${f.customerName ? ` from ${f.customerName}` : ""}? This can't be undone.`,
+      onYes: async () => {
+        try { await rpc("delete_feedback", { p_actor: session.id, p_token: session.token, p_id: f.id }); await refresh(); flash("Feedback deleted"); }
+        catch (e) { handleErr(e); }
+      },
+    });
+  };
+  const clearAllFeedback = () => {
+    setConfirmState({
+      message: `Delete ALL ${feedback.length} feedback review${feedback.length === 1 ? "" : "s"}? This removes every review permanently and can't be undone.`,
+      confirmLabel: "Yes, delete all",
+      onYes: async () => {
+        try { await rpc("clear_feedback", { p_actor: session.id, p_token: session.token }); await refresh(); flash("All feedback deleted"); }
+        catch (e) { handleErr(e); }
+      },
+    });
+  };
 
   const renderFeedback = () => {
     const unread = feedback.filter((f) => !f.read).length;
@@ -1957,6 +1976,12 @@ export default function App() {
               Mark all read
             </button>
           )}
+          {isOwner && feedback.length > 0 && (
+            <button onClick={clearAllFeedback}
+              className={`${unread > 0 ? "ml-2" : "ml-auto"} px-3 py-2 rounded-xl border border-red-200 text-red-600 text-sm font-semibold flex items-center gap-1.5`}>
+              <Trash2 className="w-4 h-4" /> Delete all
+            </button>
+          )}
         </div>
 
         {feedback.length === 0 ? (
@@ -1966,8 +1991,8 @@ export default function App() {
         ) : (
           <div className="grid sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2 items-start">
             {feedback.map((f) => (
-              <button key={f.id} onClick={() => markFeedbackRead(f)}
-                className={`w-full text-left rounded-2xl border p-3 transition ${f.read ? "bg-white border-gray-200" : "bg-amber-50 border-amber-200"}`}>
+              <div key={f.id} onClick={() => markFeedbackRead(f)}
+                className={`w-full text-left rounded-2xl border p-3 transition cursor-pointer ${f.read ? "bg-white border-gray-200" : "bg-amber-50 border-amber-200"}`}>
                 <div className="flex items-center gap-2">
                   <div className="flex">
                     {[1, 2, 3, 4, 5].map((n) => (
@@ -1976,12 +2001,18 @@ export default function App() {
                   </div>
                   {!f.read && <span className="w-2 h-2 rounded-full bg-orange-500" title="Unread" />}
                   <span className="ml-auto text-[11px] text-gray-400">{fmtDateTime(f.createdAt)}</span>
+                  {isOwner && (
+                    <button onClick={(e) => { e.stopPropagation(); deleteFeedback(f); }}
+                      className="p-1 -mr-1 text-gray-300 hover:text-red-500" title="Delete feedback">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
                 {f.comment && <p className="text-sm text-gray-800 mt-1.5 whitespace-pre-wrap">{f.comment}</p>}
                 <p className="text-xs text-gray-500 mt-1">
                   {[f.customerName, f.customerMobile].filter(Boolean).join(" · ") || "Anonymous"}{f.billNo ? ` · ${f.billNo}` : ""}
                 </p>
-              </button>
+              </div>
             ))}
           </div>
         )}
