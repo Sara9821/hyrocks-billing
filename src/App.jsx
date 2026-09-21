@@ -650,8 +650,13 @@ export default function App() {
   const [salesPeriod, setSalesPeriod] = useState("today");
   const [salesStart, setSalesStart] = useState("");
   const [salesEnd, setSalesEnd] = useState("");
+  const [salesDay, setSalesDay] = useState("");                 // a single chosen day
+  const [dayReport, setDayReport] = useState(null);             // {day,total,count,byStaff,bills}
   const [salesResult, setSalesResult] = useState(null); // {total,count,label}
   const [salesLoading, setSalesLoading] = useState(false);
+  // "Total stock" report
+  const [stockReport, setStockReport] = useState(null);
+  const [stockLoading, setStockLoading] = useState(false);
 
   const flash = (msg) => { setToast(msg); setTimeout(() => setToast(""), 1800); };
 
@@ -1678,6 +1683,7 @@ export default function App() {
         p_field: searchField, p_q: searchQ.trim(), p_start: searchStart, p_end: searchEnd,
       });
       setSearchResults(res || []);
+      setDayReport(null);   // a search replaces any day view in the list below
     } catch (e) { handleErr(e); }
     setSearching(false);
   };
@@ -1690,7 +1696,22 @@ export default function App() {
     const y = ist.getFullYear(), m = String(ist.getMonth() + 1).padStart(2, "0"), d = String(ist.getDate()).padStart(2, "0");
     return `${y}-${m}-${d}`;
   };
+  const fmtDay = (d) => { try { return new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }); } catch { return d; } };
+
   const runSalesTotal = async () => {
+    if (salesPeriod === "day") {
+      if (!salesDay) { flash("Pick a day"); return; }
+      setSalesLoading(true);
+      try {
+        const r = await rpc("day_report", { p_actor: session.id, p_token: session.token, p_day: salesDay });
+        setDayReport({ day: salesDay, total: Number(r.total) || 0, count: Number(r.count) || 0, byStaff: r.byStaff || [], bills: r.bills || [] });
+        setSalesResult(null);
+        setSearchResults(null);   // the day's bills take over the bill list below
+      } catch (e) { handleErr(e); }
+      setSalesLoading(false);
+      return;
+    }
+    setDayReport(null);
     let start, end, label;
     if (salesPeriod === "custom") {
       if (!salesStart || !salesEnd) { flash("Pick a start and end date"); return; }
@@ -1708,9 +1729,27 @@ export default function App() {
     setSalesLoading(false);
   };
 
+  const loadStockReport = async () => {
+    setStockLoading(true);
+    try {
+      const r = await rpc("stock_report", { p_actor: session.id, p_token: session.token });
+      setStockReport(r);
+    } catch (e) { handleErr(e); }
+    setStockLoading(false);
+  };
+
   const renderReports = () => {
     const myToday = (todayStats.byStaff.find((s) => s.name === session.name) || {}).count || 0;
-    const list = (isManager && searchResults !== null) ? searchResults : bills.slice(0, 100);
+    const list = dayReport ? dayReport.bills : ((isManager && searchResults !== null) ? searchResults : bills.slice(0, 100));
+    const reloadAfterBillChange = async () => {
+      await refresh();
+      if (dayReport) {
+        try {
+          const r = await rpc("day_report", { p_actor: session.id, p_token: session.token, p_day: dayReport.day });
+          setDayReport({ day: dayReport.day, total: Number(r.total) || 0, count: Number(r.count) || 0, byStaff: r.byStaff || [], bills: r.bills || [] });
+        } catch (e) { handleErr(e); }
+      } else if (searchResults !== null) { await runSearch(); }
+    };
     const billRow = (b) => (
       <div key={b.id} className={`flex items-center px-3 py-2.5 bg-white rounded-xl border ${b.cancelled ? "border-gray-200 opacity-70" : "border-gray-200 hover:border-orange-400"}`}>
         <button onClick={() => setReceiptBill(b)} className="flex items-center flex-1 min-w-0 text-left">
@@ -1741,7 +1780,7 @@ export default function App() {
             confirmLabel: "Yes, cancel bill",
             cancelLabel: "No, keep it",
             danger: false,
-            onYes: async () => { try { await rpc("cancel_bill", { p_actor: session.id, p_token: session.token, p_id: b.id }); await refresh(); if (searchResults !== null) await runSearch(); flash("Bill cancelled"); } catch (e) { handleErr(e); } },
+            onYes: async () => { try { await rpc("cancel_bill", { p_actor: session.id, p_token: session.token, p_id: b.id }); await reloadAfterBillChange(); flash("Bill cancelled"); } catch (e) { handleErr(e); } },
           })} className="ml-0.5 p-2 text-gray-300 hover:text-amber-600" title="Cancel bill">
             <Ban className="w-4 h-4" />
           </button>
@@ -1749,7 +1788,7 @@ export default function App() {
         {isOwner && (
           <button onClick={() => setConfirmState({
             message: `Delete bill ${b.billNo} (${inr(b.total)})? It will be removed completely.${b.cancelled ? "" : " Its items go back into stock."} This can't be undone.`,
-            onYes: async () => { try { await rpc("delete_bill", { p_actor: session.id, p_token: session.token, p_id: b.id }); await refresh(); if (searchResults !== null) await runSearch(); flash("Bill deleted"); } catch (e) { handleErr(e); } },
+            onYes: async () => { try { await rpc("delete_bill", { p_actor: session.id, p_token: session.token, p_id: b.id }); await reloadAfterBillChange(); flash("Bill deleted"); } catch (e) { handleErr(e); } },
           })} className="ml-0.5 p-2 text-gray-300 hover:text-red-500" title="Delete bill">
             <Trash2 className="w-4 h-4" />
           </button>
@@ -1777,9 +1816,10 @@ export default function App() {
 
             <p className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1.5">Total sales</p>
             <div className="bg-white rounded-2xl border border-gray-200 p-3 mb-5 space-y-2">
-              <select value={salesPeriod} onChange={(e) => { setSalesPeriod(e.target.value); setSalesResult(null); }}
+              <select value={salesPeriod} onChange={(e) => { setSalesPeriod(e.target.value); setSalesResult(null); setDayReport(null); }}
                 className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:border-orange-400">
                 <option value="today">Today</option>
+                <option value="day">A specific day</option>
                 <option value="week">Last week</option>
                 <option value="month">Last month</option>
                 <option value="quarter">Last quarter</option>
@@ -1787,6 +1827,13 @@ export default function App() {
                 <option value="year">Last year</option>
                 <option value="custom">Custom range</option>
               </select>
+              {salesPeriod === "day" && (
+                <div>
+                  <label className="text-[11px] text-gray-500">Choose a day</label>
+                  <input type="date" value={salesDay} onChange={(e) => { setSalesDay(e.target.value); setDayReport(null); }}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+              )}
               {salesPeriod === "custom" && (
                 <div className="grid grid-cols-2 gap-2">
                   <div>
@@ -1811,6 +1858,82 @@ export default function App() {
                   <p className="text-2xl font-extrabold text-emerald-700 mt-0.5">{inr(salesResult.total)}</p>
                   <p className="text-xs text-gray-500">over {salesResult.count} bill{salesResult.count === 1 ? "" : "s"}</p>
                 </div>
+              )}
+              {salesPeriod === "day" && dayReport && (
+                <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3">
+                  <p className="text-xs text-gray-600 text-center">{fmtDay(dayReport.day)}</p>
+                  <p className="text-2xl font-extrabold text-emerald-700 mt-0.5 text-center">{inr(dayReport.total)}</p>
+                  <p className="text-xs text-gray-500 text-center">over {dayReport.count} bill{dayReport.count === 1 ? "" : "s"}</p>
+                  <div className="mt-2 border-t border-emerald-100 pt-2">
+                    <p className="text-[11px] font-semibold text-gray-500 mb-1">Who billed that day</p>
+                    {dayReport.byStaff.length === 0 ? (
+                      <p className="text-xs text-gray-400">No bills on this day.</p>
+                    ) : (
+                      dayReport.byStaff.map((s) => (
+                        <div key={s.name} className="flex items-center text-xs py-0.5">
+                          <span className="font-medium text-gray-900">{s.name}</span>
+                          <span className="ml-auto text-gray-500 mr-3">{s.count} bill{s.count === 1 ? "" : "s"}</span>
+                          <span className="font-semibold text-gray-900">{inr(s.total)}</span>
+                        </div>
+                      ))
+                    )}
+                    <p className="text-[11px] text-gray-400 mt-1.5">The full bill list for this day is shown below.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <p className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1.5">Total stock</p>
+            <div className="bg-white rounded-2xl border border-gray-200 p-3 mb-5 space-y-2">
+              <button onClick={loadStockReport} disabled={stockLoading}
+                className="w-full py-2.5 rounded-xl bg-orange-500 text-white text-sm font-semibold disabled:opacity-50">
+                {stockLoading ? "Loading…" : stockReport ? "Refresh stock report" : "Show stock report"}
+              </button>
+              {stockReport && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-xl bg-gray-50 border border-gray-200 p-3">
+                      <p className="text-xs text-gray-500">Total stock</p>
+                      <p className="text-xl font-extrabold text-gray-900 mt-0.5">{Number(stockReport.summary?.units) || 0}<span className="text-sm font-medium text-gray-400"> units</span></p>
+                    </div>
+                    <div className="rounded-xl bg-gray-50 border border-gray-200 p-3">
+                      <p className="text-xs text-gray-500">Stock value</p>
+                      <p className="text-xl font-extrabold text-emerald-700 mt-0.5">{inr(stockReport.summary?.value || 0)}</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    {stockReport.summary?.itemCount || 0} items · {stockReport.summary?.outCount || 0} out of stock · {stockReport.summary?.lowCount || 0} low (≤5)
+                  </p>
+                  {stockReport.lastAdded && (
+                    <p className="text-xs text-gray-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                      Last added: <b>+{stockReport.lastAdded.delta}</b> to {stockReport.lastAdded.itemName} ({stockReport.lastAdded.category}) · {fmtDateTime(stockReport.lastAdded.at)}
+                    </p>
+                  )}
+                  <div>
+                    <p className="text-[11px] font-semibold text-gray-500 mt-1 mb-1">By category</p>
+                    {(stockReport.byCategory || []).map((c) => (
+                      <div key={c.category} className="flex items-center text-xs py-0.5">
+                        <span className="text-gray-900 truncate">{c.category}</span>
+                        <span className="ml-auto text-gray-500 mr-3 shrink-0">{c.units} units</span>
+                        <span className="font-semibold text-gray-900 shrink-0">{inr(c.value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold text-gray-500 mt-1 mb-1">Recent stock changes</p>
+                    {(stockReport.recent || []).length === 0 ? (
+                      <p className="text-xs text-gray-400">No stock changes recorded yet. New additions will show here from now on.</p>
+                    ) : (
+                      stockReport.recent.map((r, i) => (
+                        <div key={i} className="flex items-center text-xs py-0.5">
+                          <span className={`shrink-0 font-bold ${r.delta >= 0 ? "text-emerald-600" : "text-red-500"}`}>{r.delta >= 0 ? `+${r.delta}` : r.delta}</span>
+                          <span className="ml-2 text-gray-800 truncate">{r.itemName}</span>
+                          <span className="ml-auto text-gray-400 shrink-0">{fmtDateTime(r.at)}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
               )}
             </div>
 
@@ -1879,10 +2002,12 @@ export default function App() {
         </div>
 
         <p className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1.5">
-          {(isManager && searchResults !== null) ? `Search results (${searchResults.length})` : "Recent bills (latest 100)"}
+          {dayReport ? `Bills on ${fmtDay(dayReport.day)} (${dayReport.bills.length})`
+            : (isManager && searchResults !== null) ? `Search results (${searchResults.length})`
+            : "Recent bills (latest 100)"}
         </p>
         {list.length === 0 ? (
-          <p className="text-sm text-gray-400 px-3 py-4 bg-white rounded-xl border border-gray-200">{(isManager && searchResults !== null) ? "No bills match your search." : "No bills made yet."}</p>
+          <p className="text-sm text-gray-400 px-3 py-4 bg-white rounded-xl border border-gray-200">{dayReport ? "No bills on this day." : (isManager && searchResults !== null) ? "No bills match your search." : "No bills made yet."}</p>
         ) : (
           <div className="grid sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2">
             {list.map(billRow)}
@@ -2347,6 +2472,13 @@ export default function App() {
                 <span>+</span>
                 <span className="flex items-center gap-1"><MessageCircle className="w-4 h-4" /> WhatsApp</span>
               </button>
+              {receiptBill.draft && (
+                <button disabled={committing}
+                  onClick={async () => { const b = await commitBill(); if (b) { setReceiptBill(null); flash("Bill saved ✓"); } }}
+                  className="w-full py-2.5 rounded-xl border border-gray-300 text-gray-700 text-sm font-semibold disabled:opacity-40">
+                  Save only — no print, no WhatsApp
+                </button>
+              )}
               </>
               )}
             </div>
