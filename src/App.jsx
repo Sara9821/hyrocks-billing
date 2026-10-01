@@ -559,6 +559,11 @@ export default function App() {
   const [showIntro, setShowIntro] = useState(true); // fireworks splash on app start
   const [loading, setLoading] = useState(true);
   const [config, setConfigState] = useState({ shopName: "Hyrocks Crackers", address: "", phone: "", nextBillNo: 1 });
+  const [outlets, setOutlets] = useState([]);
+  const [currentOutlet, setCurrentOutlet] = useState(null);
+  const [newOutletName, setNewOutletName] = useState("");
+  const [newOutletCode, setNewOutletCode] = useState("");
+  const [addingOutlet, setAddingOutlet] = useState(false);
   const [users, setUsersState] = useState([]);
   const [items, setItemsState] = useState([]);
   const [bills, setBillsState] = useState([]);
@@ -674,6 +679,8 @@ export default function App() {
     }
     setItemsState(st.items || []);
     setBillsState(st.bills || []);
+    setOutlets(st.outlets || []);
+    setCurrentOutlet(st.currentOutlet || null);
     setUsersState(st.users || []);
     setLogsState(st.logs || []);
     setFeedbackState(st.feedback || []);
@@ -1094,6 +1101,19 @@ export default function App() {
     localStorage.removeItem("hrc_session");
     setSession(null);
     setScreen("billing");
+  };
+
+  // Switch the active outlet (server remembers it); clear outlet-specific views.
+  const switchOutlet = async (oid) => {
+    if (!oid || oid === currentOutlet) return;
+    try {
+      await rpc("set_active_outlet", { p_actor: session.id, p_token: session.token, p_outlet: oid });
+      clearBill(); setSearchResults(null); setDayReport(null); setSalesResult(null); setStockReport(null); setReceiptBill(null);
+      setScreen("billing");
+      await refresh();
+      const o = outlets.find((x) => x.id === oid);
+      flash(o ? `Switched to ${o.name}` : "Outlet switched");
+    } catch (e) { handleErr(e); }
   };
   const confirmLogout = () => setConfirmState({
     message: "Log out of Hyrocks?",
@@ -2164,9 +2184,60 @@ export default function App() {
         </div>
       </div>
 
+      {isOwner && (
+        <div>
+          <h2 className="text-lg font-bold text-gray-900 mb-3">Outlets</h2>
+          <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">
+            <div className="divide-y divide-gray-50">
+              {outlets.map((o) => (
+                <div key={o.id} className="flex items-center py-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-900">
+                      {o.name}
+                      {o.id === currentOutlet && <span className="ml-2 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1 py-0.5">CURRENT</span>}
+                    </p>
+                    <p className="text-xs text-gray-500">Bills: {o.prefix}-####</p>
+                  </div>
+                  {o.id !== currentOutlet && (
+                    <button onClick={() => switchOutlet(o.id)} className="ml-auto px-3 py-1.5 rounded-lg border border-gray-200 text-gray-700 text-xs font-semibold">Switch</button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="border-t border-gray-100 pt-3">
+              <p className="text-xs font-semibold text-gray-500 mb-1.5">Add a new outlet</p>
+              <div className="grid grid-cols-3 gap-2">
+                <input value={newOutletName} onChange={(e) => setNewOutletName(e.target.value)} placeholder="Name (e.g. Kurla)"
+                  className="col-span-2 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" />
+                <input value={newOutletCode} onChange={(e) => setNewOutletCode(e.target.value)} placeholder="Code" maxLength={6}
+                  className="px-3 py-2 rounded-lg border border-gray-200 text-sm uppercase focus:outline-none focus:border-orange-400" />
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1">Bills will look like <b>HRC/{(newOutletCode || "KUR").toUpperCase().replace(/[^A-Z0-9]/g, "")}-0001</b>. The new outlet starts empty and copies this outlet's address (you can edit it after switching to it).</p>
+              <button disabled={addingOutlet}
+                onClick={async () => {
+                  if (!newOutletName.trim()) { flash("Enter an outlet name"); return; }
+                  if (!newOutletCode.trim()) { flash("Enter a short code (e.g. KUR)"); return; }
+                  setAddingOutlet(true);
+                  try {
+                    const r = await rpc("create_outlet", { p_actor: session.id, p_token: session.token, p_name: newOutletName.trim(), p_code: newOutletCode.trim() });
+                    setNewOutletName(""); setNewOutletCode("");
+                    await refresh();
+                    flash(r && r.name ? `Outlet "${r.name}" created (${r.prefix})` : "Outlet created");
+                  } catch (e) { handleErr(e); }
+                  setAddingOutlet(false);
+                }}
+                className="w-full mt-2 py-2.5 rounded-xl bg-indigo-900 text-white text-sm font-semibold disabled:opacity-60">
+                {addingOutlet ? "Adding…" : "Add outlet"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isManager && (
         <div>
-          <h2 className="text-lg font-bold text-gray-900 mb-3">Shop details</h2>
+          <h2 className="text-lg font-bold text-gray-900 mb-1">Shop details{outlets.length > 1 ? ` — ${(outlets.find((o) => o.id === currentOutlet) || {}).name || ""}` : ""}</h2>
+          {outlets.length > 1 && <p className="text-xs text-gray-500 mb-3">These apply to the <b>current outlet</b> only and show on its bills. Switch outlet to edit another.</p>}
           <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">
             <div>
               <label className="text-xs font-semibold text-gray-500">Shop name</label>
@@ -2300,6 +2371,13 @@ export default function App() {
         <div className="max-w-[1700px] mx-auto px-4 h-[57px] flex items-center">
           <img src={LOGO_DATA_URI} alt="" className="w-7 h-7 rounded-md object-cover mr-2" />
           <span className="font-bold tracking-tight">{config.shopName}</span>
+          {outlets.length > 1 && (
+            <select value={currentOutlet || ""} onChange={(e) => switchOutlet(e.target.value)}
+              title="Switch outlet"
+              className="ml-2 sm:ml-3 px-2 py-1 rounded-lg bg-white/15 text-white text-xs font-semibold border border-white/25 focus:outline-none max-w-[38vw]">
+              {outlets.map((o) => <option key={o.id} value={o.id} className="text-gray-900">{o.name}</option>)}
+            </select>
+          )}
           <div className="ml-auto flex items-center gap-2">
             <span className="text-sm text-indigo-200 hidden sm:inline mr-1">{session.name}</span>
             <button onClick={toggleTheme} title="Switch theme"
