@@ -370,6 +370,20 @@ const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
 // Display label for roles. Internally the top role stays "owner"; shown as "Super Admin".
 const roleLabel = (r) => (r === "owner" ? "Super Admin" : r === "admin" ? "Admin" : "User");
 
+// Activity-log filter categories → the exact action strings they match
+const LOG_CATS = [
+  { key: "made", label: "Bill created", actions: ["Made bill"] },
+  { key: "edited", label: "Bill edited", actions: ["Edited bill"] },
+  { key: "cancelled", label: "Bill cancelled", actions: ["Cancelled bill"] },
+  { key: "deleted", label: "Bill deleted", actions: ["Deleted bill"] },
+  { key: "login", label: "Login", actions: ["Logged in"] },
+  { key: "logout", label: "Logout", actions: ["Logged out"] },
+  { key: "whatsapp", label: "WhatsApp sent", actions: ["Sent WhatsApp bill"] },
+  { key: "items", label: "Item/stock changes", actions: ["Added item", "Edited item", "Deleted item", "Cleared all items", "Cleared all item prices", "Cleared all item stock"] },
+  { key: "users", label: "Users & access", actions: ["Created user", "Updated user", "Updated own account", "Set outlet access", "Created outlet"] },
+  { key: "feedback", label: "Feedback", actions: ["Deleted feedback", "Cleared all feedback"] },
+];
+
 // Mirror of the database password rule, for instant feedback.
 function pwError(p) {
   if (!p || p.length < 8) return "Use at least 8 characters";
@@ -605,6 +619,12 @@ export default function App() {
   const [showBulk, setShowBulk] = useState(false);         // hidden bulk-actions panel
   const [toast, setToast] = useState("");
   const [logFilter, setLogFilter] = useState("all");
+  const [logActions, setLogActions] = useState([]);   // checked category keys
+  const [logPeriod, setLogPeriod] = useState("all");
+  const [logStart, setLogStart] = useState("");
+  const [logEnd, setLogEnd] = useState("");
+  const [logResults, setLogResults] = useState(null); // null = show default recent logs
+  const [logSearching, setLogSearching] = useState(false);
 
   // forced first-login password change
   const [forcePw1, setForcePw1] = useState("");
@@ -2037,24 +2057,100 @@ export default function App() {
     );
   };
 
+  const runLogSearch = async () => {
+    let actions = [];
+    logActions.forEach((k) => { const c = LOG_CATS.find((x) => x.key === k); if (c) actions = actions.concat(c.actions); });
+    let start = "", end = "";
+    if (logPeriod === "custom") {
+      if (!logStart || !logEnd) { flash("Pick a start and end date"); return; }
+      start = logStart; end = logEnd;
+    } else if (logPeriod !== "all") {
+      const map = { today: 0, week: 6, month: 29, quarter: 89, year: 364 };
+      start = istDateStr(map[logPeriod] ?? 0); end = istDateStr(0);
+    }
+    setLogSearching(true);
+    try {
+      const r = await rpc("search_logs", {
+        p_actor: session.id, p_token: session.token,
+        p_actions: actions.length ? actions : null,
+        p_user: logFilter === "all" ? null : logFilter,
+        p_start: start, p_end: end,
+      });
+      setLogResults(r || []);
+    } catch (e) { handleErr(e); }
+    setLogSearching(false);
+  };
+  const resetLogSearch = () => { setLogResults(null); setLogActions([]); setLogPeriod("all"); setLogStart(""); setLogEnd(""); setLogFilter("all"); };
+
   const renderLogs = () => {
-    const filtered = logFilter === "all" ? logs : logs.filter((l) => l.byId === logFilter);
+    const list = logResults !== null ? logResults : (logFilter === "all" ? logs : logs.filter((l) => l.byId === logFilter));
     return (
       <div className="max-w-4xl mx-auto px-3 pb-32 pt-4">
-        <div className="flex items-center gap-2 mb-3">
-          <h2 className="text-lg font-bold text-gray-900">Activity log</h2>
-          <select value={logFilter} onChange={(e) => setLogFilter(e.target.value)}
-            className="ml-auto px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-900 text-sm focus:outline-none focus:border-orange-400">
-            <option value="all">All users</option>
-            {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-          </select>
+        <h2 className="text-lg font-bold text-gray-900 mb-3">Activity log</h2>
+
+        <div className="bg-white rounded-2xl border border-gray-200 p-3 mb-3 space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[11px] font-semibold text-gray-500">User</label>
+              <select value={logFilter} onChange={(e) => setLogFilter(e.target.value)}
+                className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-900 text-sm focus:outline-none focus:border-orange-400">
+                <option value="all">All users</option>
+                {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] font-semibold text-gray-500">When</label>
+              <select value={logPeriod} onChange={(e) => setLogPeriod(e.target.value)}
+                className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-900 text-sm focus:outline-none focus:border-orange-400">
+                <option value="all">All time</option>
+                <option value="today">Today</option>
+                <option value="week">Last week</option>
+                <option value="month">Last month</option>
+                <option value="quarter">Last quarter</option>
+                <option value="year">Last year</option>
+                <option value="custom">Custom range</option>
+              </select>
+            </div>
+          </div>
+          {logPeriod === "custom" && (
+            <div className="grid grid-cols-2 gap-2">
+              <div><label className="text-[11px] text-gray-500">From</label>
+                <input type="date" value={logStart} onChange={(e) => setLogStart(e.target.value)} className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" /></div>
+              <div><label className="text-[11px] text-gray-500">To</label>
+                <input type="date" value={logEnd} onChange={(e) => setLogEnd(e.target.value)} className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-orange-400" /></div>
+            </div>
+          )}
+          <div>
+            <p className="text-[11px] font-semibold text-gray-500 mb-1.5">Show which actions? <span className="font-normal text-gray-400">(tick any; leave all empty for everything)</span></p>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+              {LOG_CATS.map((c) => (
+                <label key={c.key} className="flex items-center gap-2 text-sm text-gray-700">
+                  <input type="checkbox" checked={logActions.includes(c.key)}
+                    onChange={(e) => setLogActions((prev) => e.target.checked ? [...prev, c.key] : prev.filter((k) => k !== c.key))} />
+                  {c.label}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={runLogSearch} disabled={logSearching}
+              className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2">
+              <Search className="w-4 h-4" /> {logSearching ? "Searching…" : "Search"}
+            </button>
+            {logResults !== null && (
+              <button onClick={resetLogSearch} className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold">Reset</button>
+            )}
+          </div>
         </div>
-        <p className="text-xs text-gray-400 mb-3">Every sign-in, price/stock change, bill, and user change — newest first. Last {logs.length} events kept.</p>
+
+        <p className="text-xs text-gray-400 mb-2">
+          {logResults !== null ? `${list.length} matching event${list.length === 1 ? "" : "s"}` : `Newest first · last ${logs.length} events kept`}
+        </p>
         <div className="bg-white rounded-2xl border border-gray-200 divide-y divide-gray-50">
-          {filtered.length === 0 ? (
-            <p className="text-sm text-gray-400 px-3 py-6 text-center">No activity yet.</p>
+          {list.length === 0 ? (
+            <p className="text-sm text-gray-400 px-3 py-6 text-center">{logResults !== null ? "No activity matches these filters." : "No activity yet."}</p>
           ) : (
-            filtered.map((l) => (
+            list.map((l) => (
               <div key={l.id} className="px-3 py-2.5">
                 <div className="flex items-baseline gap-2">
                   <span className="text-sm font-semibold text-gray-900">{l.action}</span>
@@ -2366,7 +2462,7 @@ export default function App() {
     { id: "items", label: "Items", icon: Package },
     { id: "reports", label: "Reports", icon: BarChart3 },
     ...(isManager ? [{ id: "feedback", label: "Feedback", icon: Star }] : []),
-    ...(isOwner ? [{ id: "logs", label: "Logs", icon: ScrollText }] : []),
+    ...(isManager ? [{ id: "logs", label: "Logs", icon: ScrollText }] : []),
     { id: "settings", label: "Settings", icon: SettingsIcon },
   ];
   const feedbackUnread = feedback.filter((f) => !f.read).length;
@@ -2419,7 +2515,7 @@ export default function App() {
       {screen === "items" && renderItems()}
       {screen === "reports" && renderReports()}
       {screen === "feedback" && isManager && renderFeedback()}
-      {screen === "logs" && isOwner && renderLogs()}
+      {screen === "logs" && isManager && renderLogs()}
       {screen === "settings" && renderSettings()}
 
       {/* bottom nav */}
