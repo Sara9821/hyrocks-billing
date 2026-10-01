@@ -227,6 +227,7 @@ function PrintReceipt({ bill, config }) {
       <span style={{ whiteSpace: "nowrap" }}>{r}</span>
     </div>
   );
+  const totalQty = (bill.lines || []).reduce((s, l) => s + (Number(l.qty) || 0), 0);
   return createPortal(
     <div id="print-area" style={{ fontFamily: mono, color: "#000", fontWeight: 700, WebkitTextStroke: "0.3px #000", WebkitPrintColorAdjust: "exact", printColorAdjust: "exact" }}>
       <div style={{ width: "72mm", padding: "2mm 3mm", fontSize: "11pt", lineHeight: 1.35 }}>
@@ -260,7 +261,29 @@ function PrintReceipt({ bill, config }) {
         <Dash />
         <div style={{ fontSize: "9pt" }}>Billed by: {bill.billedBy}</div>
         <div style={{ textAlign: "center", fontSize: "9pt", marginTop: "3mm" }}>Thank you! Stay safe</div>
+        {!bill.cancelled && (
+          <div style={{ textAlign: "center", fontSize: "8pt", marginTop: "3mm", borderTop: "1.5px dashed #000", paddingTop: "1mm" }}>- - - - - CUT HERE - - - - -</div>
+        )}
       </div>
+
+      {!bill.cancelled && (
+        <div style={{ width: "72mm", padding: "2mm 3mm", fontSize: "11pt", lineHeight: 1.35, pageBreakBefore: "always", breakBefore: "page" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: "10pt", fontWeight: 800 }}>{config.shopName}</div>
+            <div style={{ fontSize: "9pt", fontWeight: 800, letterSpacing: "1.5px", marginTop: "1mm" }}>COLLECTION TOKEN</div>
+            <div style={{ fontSize: "8pt" }}>{fmtDateTime(bill.createdAt)}</div>
+          </div>
+          <Dash />
+          <div style={{ textAlign: "center", fontSize: "9pt" }}>Bill No.</div>
+          <div style={{ textAlign: "center", fontSize: "18pt", fontWeight: 800, letterSpacing: "0.5px", margin: "0.5mm 0 1.5mm" }}>{bill.billNo}</div>
+          <Dash />
+          <Row l="Total items" r={String(totalQty)} />
+          <Row l="Amount" r={inr(bill.total)} bold big />
+          <Dash />
+          <div style={{ textAlign: "center", fontSize: "8.5pt", marginTop: "2mm" }}>Show this token to collect your order. Please keep it safe.</div>
+          <div style={{ textAlign: "center", fontSize: "8pt", marginTop: "4mm", borderTop: "1.5px dashed #000", paddingTop: "1mm" }}>- - - - - - - - - -</div>
+        </div>
+      )}
     </div>,
     document.body
   );
