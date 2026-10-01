@@ -2282,7 +2282,7 @@ export default function App() {
         <div>
           <div className="flex items-center mb-3">
             <h2 className="text-lg font-bold text-gray-900">Users</h2>
-            <button onClick={() => setEditingUser({ name: "", password: "", role: "user", blocked: false, mustChange: true })}
+            <button onClick={() => setEditingUser({ name: "", password: "", role: "user", blocked: false, mustChange: true, outlets: currentOutlet ? [currentOutlet] : [] })}
               className="ml-auto px-3 py-2 rounded-xl bg-orange-500 text-white text-sm font-semibold flex items-center gap-1.5">
               <Plus className="w-4 h-4" /> Add user
             </button>
@@ -2293,9 +2293,17 @@ export default function App() {
                 <div className={`w-9 h-9 rounded-full flex items-center justify-center mr-3 ${u.blocked ? "bg-red-100" : "bg-indigo-100"}`}>
                   <User className={`w-4 h-4 ${u.blocked ? "text-red-500" : "text-indigo-900"}`} />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm font-semibold text-gray-900">{u.name}{u.id === session.id ? " (you)" : ""}</p>
                   <p className="text-xs text-gray-500">{roleLabel(u.role)}{u.blocked ? " · blocked" : ""}</p>
+                  {outlets.length > 1 && (
+                    <p className="text-[11px] text-gray-400 truncate">
+                      {u.role === "owner" ? "All outlets"
+                        : (u.outlets && u.outlets.length)
+                          ? outlets.filter((o) => (u.outlets || []).includes(o.id)).map((o) => o.name).join(", ")
+                          : "No outlet access"}
+                    </p>
+                  )}
                 </div>
                 {(u.id === session.id || canManageTarget(u)) && (
                   <button onClick={() => setEditingUser({ ...u, password: "" })} className="ml-auto p-2 text-gray-400 hover:text-indigo-900">
@@ -2710,6 +2718,26 @@ export default function App() {
                   Block this user (can't sign in)
                 </label>
               )}
+              {editingUser.role !== "owner" && editingUser.id !== session.id && outlets.length > 0 &&
+                (isOwner || (session.role === "admin" && (editingUser.role || "user") === "user")) && (
+                <div>
+                  <label className="text-xs font-semibold text-gray-500">Outlet access</label>
+                  <p className="text-[11px] text-gray-400 mb-1.5">Which outlets can this person use?</p>
+                  <div className="space-y-1.5">
+                    {outlets.map((o) => (
+                      <label key={o.id} className="flex items-center gap-2 text-sm text-gray-700">
+                        <input type="checkbox" checked={(editingUser.outlets || []).includes(o.id)}
+                          onChange={(e) => {
+                            const cur = new Set(editingUser.outlets || []);
+                            if (e.target.checked) cur.add(o.id); else cur.delete(o.id);
+                            setEditingUser({ ...editingUser, outlets: [...cur] });
+                          }} />
+                        {o.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="p-4 border-t border-gray-100 flex gap-2">
               {canManageTarget(editingUser) && editingUser.id && editingUser.id !== session.id && (
@@ -2744,7 +2772,13 @@ export default function App() {
                     blocked: !!editingUser.blocked,
                   };
                   try {
-                    await rpc("save_user", { p_actor: session.id, p_token: session.token, p_user: u, p_password: typed || null });
+                    const saved = await rpc("save_user", { p_actor: session.id, p_token: session.token, p_user: u, p_password: typed || null });
+                    const uid = editingUser.id || (saved && saved.id);
+                    const canAssign = editingUser.role !== "owner" && uid && uid !== session.id && outlets.length > 0 &&
+                      (isOwner || (session.role === "admin" && (editingUser.role || "user") === "user"));
+                    if (canAssign) {
+                      await rpc("set_user_outlets", { p_actor: session.id, p_token: session.token, p_user: uid, p_outlets: editingUser.outlets || [] });
+                    }
                     if (editingUser.id === session.id) {
                       const updated = { ...session, name };
                       localStorage.setItem("hrc_session", JSON.stringify(updated));
